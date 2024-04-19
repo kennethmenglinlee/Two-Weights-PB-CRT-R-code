@@ -345,10 +345,6 @@ for(n in 1:n_sims){
   # generate outcomes matrix
   ztrtmnt.mat <- z.mat * trtmnteffect.mat
   ztrtmnt.mat
-  # # UATE with superpopulation
-  # (trtmnteffectL + trtmnteffectH) / 2
-  # # UATE with finite population
-  # sum(ztrtmnt.mat) / (I/2)
   
   # sum up everything
   alpha.mat
@@ -388,16 +384,8 @@ for(n in 1:n_sims){
   pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sigma2e)
   
   # # create weighted df
-    pb.df2weighted <- pb.df2
-  # clusterperiodsize <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
-  # colnames(clusterperiodsize) <- c("cluster", "period", "Freq")
-  # clusterperiodsize
-  # pb.df2weighted <- merge(pb.df2, clusterperiodsize, by=c("cluster","period"))
+  pb.df2weighted <- pb.df2
   pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
-  
-  # # create cluster:period wieghts
-  # pb.df2weighted %>% str()
-  # pb.df2weighted$clusterperiod <- paste(pb.df2weighted$cluster, pb.df2weighted$period, sep="_")
   
   # prepare df for analysis
   pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
@@ -406,53 +394,29 @@ for(n in 1:n_sims){
   
   # analyses
   IEE <- lm(outcome ~ intervention + period-1, data = pb.df2weighted)
-  # summary(IEE)$coef[,"Estimate"]["intervention"]
-  # summary(IEE)$coef[,"Std. Error"]["intervention"]^2
-  # clubSandwich::vcovCR(IEE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
   
   IEEw <- lm(outcome ~ intervention + period-1, data = pb.df2weighted, weights = pb.df2weighted$W1)
-  # summary(IEEw)$coef[,"Estimate"]["intervention"]
-  # summary(IEEw)$coef[,"Std. Error"]["intervention"]^2
-  # clubSandwich::vcovCR(IEEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
   
   FE <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted)
-  # summary(FE)$coef[,"Estimate"]["intervention"]
-  # summary(FE)$coef[,"Std. Error"]["intervention"]^2
-  # clubSandwich::vcovCR(FE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
-  
+
   FEw <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
-  # summary(FEw)$coef[,"Estimate"]["intervention"]
-  # summary(FEw)$coef[,"Std. Error"]["intervention"]^2
-  # clubSandwich::vcovCR(FEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
-  
+
   EME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.df2weighted)
-  # summary(EME)$coef[,"Estimate"]["intervention"]
-  # summary(EME)$coef[,"Std. Error"]["intervention"]^2
-  
+
   EMEw <- mix(outcome ~ intervention + period-1 + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
-  # summary(EMEw)$coef[,"Estimate"]["intervention"]
-  # summary(EMEw)$coef[,"Std. Error"]["intervention"]^2 
-  
+
   NEME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
-  # summary(NEME)$coef[,"Estimate"]["intervention"]
-  # summary(NEME)$coef[,"Std. Error"]["intervention"]^2
-  
+
   # outputs an error?
   NEMEw <- mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
-  # summary(NEMEw)$coef[,"Estimate"]["intervention"]
-  # summary(NEMEw)$coef[,"Std. Error"]["intervention"]^2
-  
+
   # Jackknife
   jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
   names(jk.df) <- saves_jk
   jk.df
-  # jk.estimates <- c()
   for(i in levels(pb.df2weighted$cluster)){
     jk.dat <- pb.df2weighted %>% filter(cluster!=i)
-    # jk.estimates <- c(jk.estimates, 
-    #                   summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = jk.dat)
-    #                   )$coef[,"Estimate"]["intervention"]
-    # )
+    
     jk.df <- jk.df %>%
       add_row(
         cluster_i=as.numeric(i),
@@ -510,8 +474,6 @@ for(n in 1:n_sims){
 }
 etm <- proc.time()-ptm 
 etm
-# 40 minutes for 1000 sim
-# write.csv(sim.df, "1000nsim_PB_NEX.csv")
 
 sim.df
 
@@ -519,6 +481,8 @@ sim.df
 cATE <- (trtmnteffectL + trtmnteffectH) / 2
 # # cATE with finite population
 # sum(ztrtmnt.mat) / (I/2)
+
+# check results
 
 # weighted analyses [not estimating the right estimand]
 (mean(sim.df$IEE_est) - cATE)/cATE
@@ -535,42 +499,18 @@ cATE <- (trtmnteffectL + trtmnteffectH) / 2
 
 sim.df
 write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",CAC,"CAC_",ICC,"ICC",".csv"))
-# write.csv(sim.df, paste(n_sims,"sim_results_with_jackknife.csv"))
-# write.csv(sim.df, paste(n_sims,"sim_results_with_jackknife.csv"))
 ```
-What should I do about "boundary (singular) fit: see help('isSingular')"?
-Simulating this with 26 clusters and a jackknife, with all the analyses (especially the weighted ME analyses, takes forever.)
-
-[26 clusters] 1155.95 seconds (~ 20 minutes) for 10 nsims
-~ 200 minutes (~ 3.3 hrs) for 100 nsims (might be sufficient)
-~ 33 hrs for 1000 nsims (Xueqi did 1000 nsims)
--> To speed up: Maybe can cut the # of clusters in the sim 
--> To speed up: Maybe not do jackknife for all analyses (just do it for ME?), CR2 is close to jackknife for IEE & FE
-
-[10 clusters] 224.38 seconds(~3.75 minutes) for 10 nsims
-~ 30.75 minutes for 100 sims
-~ 307.5 minutes (~ 5 hrs) for 1000 nsims
--> Solution: Just cut the # of clusters. Look at case studies.
-
-[20 clusters (Costantini et al. 2014 (Hooper et al. 2018))] 760 seconds (~12 minutes) for 10 nsims
-~ 126.66 minutes (2.11 hrs) for 100 sims
-~ 21 hrs for 1000 nsims
--> Plan: Simulate with 10 clusters first, then try with 20 clusters if necessary.
 
 ```{r * clean analysis df w/ informative cluster sizes}
 library(dplyr)
 
 n_sims = 1000
-# sim.df <- read.csv(paste(n_sims,"sim_results_with_jackknife.csv"))
 
 # sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_0.8CAC_0.05ICC.csv")
 sim.df <- read.csv("results_1000sim_FALSEhettrtmnt_0.8CAC_0.05ICC.csv")
 
 head(sim.df)
 colnames(sim.df)
-
-# trtmnteffectL = 0.2
-# trtmnteffectH = 0.5 # 0.2, 0.5
 
 cate <- (0.2+0.5)/2
 
@@ -709,13 +649,6 @@ MSE.df <- (sim.df[grepl("est",colnames(sim.df))] - cate)^2
 
 # bias results  
 results.relbias <- colMeans(relbias.df)
-# not much a surprise that non-weighted are biased, they're estimating the wrong thing
-# relbias.df %>%
-#   select(
-#     colnames(.[grepl("w",colnames(.))])
-#   ) %>%
-#   colMeans()
-# # this is what we're mostly interested in
 
 # CP results
 results.CP <- colMeans(CP.df)
@@ -922,7 +855,7 @@ rbind(
 # width: 500, height: 400
 ```
 
-
+Extra exploratory code: Unused.
 ```{r Test Inference}
 # analysis
 library(lmer)
