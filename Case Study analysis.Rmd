@@ -1,0 +1,165 @@
+---
+title: "PB-CRT case study data"
+output: html_document
+date: '2023-12-18'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Taken from "PB-CRT FE test.Rmd"
+```{r * Jiah trial}
+# https://www.sciencedirect.com/science/article/pii/S2352827322003093#da0010
+
+# import cleaned up jiah dataset (cleaned by running the accompanying do file in Stata and exporting the data as .csv)
+jiah <- read.csv("jiah_trial_dataset_cleaned.csv")
+
+# identify
+# cluster
+jiah$idclus %>% table()
+
+# period
+jiah$baseline %>% table()
+jiah$endline %>% table()
+
+# cluster period
+table(jiah$idclus, jiah$endline)
+
+# treatment
+jiah$treatment %>% table()
+jiah$treatment <- factor(jiah$treatment)
+table(jiah[jiah$treatment==1,]$idclus, jiah[jiah$treatment==1,]$endline)
+
+# outcome
+# school attendance, dietary diversity, and mental health
+# In intervention vs control clusters, mean dietary diversity score was 4·0 (SD 1·5) vs 3·6 (SD 1·2) (adjDiff 0·34; 95%CI -0·23, 0·93, p = 0·242); mean Brief Problem Monitor-Youth (mental health) score was 12·5 (SD 6·0) vs 11·9 (SD 5·9) (adjDiff 0·02, 95%CI -0·06, 0·13, p = 0·610); and school enrolment rates were 70% vs 63% (adjOR 1·39, 95%CI 0·89, 2·16, p = 0·142)
+jiah$alcohol_ever # binary
+jiah$mentalhealth # continuous
+jiah$diet_score # count
+
+lm(mentalhealth ~ treatment + endline, data = jiah)
+lm(mentalhealth ~ treatment + endline + idclus, data = jiah)
+```
+
+```{r * Analyze Jiah data}
+library(dplyr)
+table(jiah$idclus, jiah$endline)
+# remove clusters with missing data from a period
+jiah.complete <- jiah %>% filter(!idclus %in% c(1, 4, 12, 21, 22, 25, 26, 31, 34, 37))
+table(jiah.complete$idclus, jiah.complete$endline)
+table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)
+length(unique(jiah.complete$idclus)) # 28 total clusters
+
+length(table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)) # 14 clusters w/ trtmnt
+length(table(jiah.complete$idclus)) # 28 clusters
+
+# get cluster means & use that as the weight...
+cellmeansize <- as.data.frame(rowMeans(table(jiah.complete$idclus, jiah.complete$endline)))
+colnames(cellmeansize) <- "mean_Freq"
+cellmeansize$idclus <- rownames(cellmeansize)
+cellmeansize
+
+# get cluster:period size
+cellsize <- as.data.frame(table(jiah.complete$idclus, jiah.complete$endline))
+colnames(cellsize) <- c("idclus", "endline", "Freq")
+cellsize
+
+# # get cp2 size
+cellsize2 <- cellsize %>% filter(endline==1) %>% select(-endline)
+colnames(cellsize2) <- c("idclus", "Freq2")
+
+# merge both into Haines_pb.df
+jiah.complete <- merge(jiah.complete, cellmeansize, by="idclus")
+jiah.complete <- merge(jiah.complete, cellsize, by=c("idclus","endline"))
+jiah.complete <- merge(jiah.complete, cellsize2, by=c("idclus"))
+
+jiah.complete$W1 <- 1/jiah.complete$Freq
+# jiah.complete$mean_W1 <- 1/jiah.complete$mean_Freq
+# jiah.complete$W2 <- 1/jiah.complete$Freq2
+
+# jiah saves dataset
+jiahsaves <- data.frame(
+  analysis = c("IEE","FE","EME","NEME", "IEEw", "FEw"),
+  est = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"]
+  ), # correct, checked
+  SE_mod = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"]
+  ) # correct, checked
+)
+
+# jackknife
+saves_jk <- c("cluster_i", "IEE", "IEEw", "FE", "FEw", "EME", "NEME")
+jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+names(jk.df) <- saves_jk
+jk.df
+for(i in unique(jiah.complete$idclus)){
+  jk.dat <- jiah.complete %>% filter(idclus!=i)
+  jk.df <- jk.df %>%
+    add_row(
+      cluster_i=as.numeric(i),
+      IEE = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat))$coef["treatment1","Estimate"],
+      IEEw = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      FE = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat))$coef["treatment1","Estimate"],
+      FEw = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      EME = summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jk.dat))$coef["treatment1","Estimate"],
+      NEME =  summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jk.dat))$coef["treatment1","Estimate"]
+    )
+  print(nrow(jk.df))
+}
+jk.df
+jiahsaves$analysis
+jiahsaves$SE_jk <- c(
+  sqrt(sum((jk.df$IEE-filter(jiahsaves,analysis=="IEE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FE-filter(jiahsaves,analysis=="FE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$EME-filter(jiahsaves,analysis=="EME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$NEME-filter(jiahsaves,analysis=="NEME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$IEEw-filter(jiahsaves,analysis=="IEEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FEw-filter(jiahsaves,analysis=="FEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df)))
+) # correct, checked
+jiahsaves
+
+# create 95% CI
+jiahsaves
+jiahsaves$mod_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_mod
+jiahsaves$mod_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_mod
+jiahsaves$jk_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_jk
+jiahsaves$jk_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_jk
+jiahsaves
+
+rbind(
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=mod_95_H, CI_95_L=mod_95_L) %>% mutate(varianceestimator="Model"),
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=jk_95_H, CI_95_L=jk_95_L) %>% mutate(varianceestimator="Jackknife")
+) %>% 
+  # create levels for variance estimator
+  mutate(varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife"))) %>% 
+  # create levels for analysis variables
+  mutate(analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw"))) %>% 
+  # create variable for weighted and unweighted analayses
+  mutate(weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")) %>%
+ggplot(., aes(x=analysis, y=est, group=varianceestimator, color=varianceestimator)) + 
+  geom_point(position=position_dodge(width=0.4)) +
+  geom_errorbar(aes(ymin=CI_95_L, ymax=CI_95_H), width=.2,
+                position=position_dodge(0.4)) +
+  facet_grid(~weighted, scales="free") +
+  ylim(-0.1,0.25) +
+  geom_hline(yintercept=0, linetype="dashed") + 
+  labs(y=NULL, x=NULL, title = "Re-analysis of JIAH trial", subtitle="Effect of community youth teams on mental health scores", color="95% CI variance estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 350
+```
+
