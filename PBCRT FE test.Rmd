@@ -1,0 +1,2381 @@
+---
+title: "PB-CRT FE"
+output: html_document
+date: '2023-12-18'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Equal cluster sizes
+
+```{r sim data}
+library(lme4)
+library(dplyr)
+
+I=6 # cluster
+J=2 # 2 periods
+# n=20
+n=100 # clusterperiod sizes
+
+
+### Constant Intervention Effect ###
+
+## P-CRT
+set.seed(2525)
+p.df <- data.frame(
+  cluster= as.factor(rep(1:I,each=n*J)),
+  period= as.factor(rep(1:J, n*I)),
+  intervention= c(rep(0, n*J*(I/2)), rep(1, n*J*(I/2))),
+  outcome=c(
+    rnorm(n=n*J*(I/2), mean=3, sd=1), # control
+    rnorm(n=n*J*(I/2), mean=5, sd=1) # intervention
+  )
+)
+## Sim PB-CRT
+pb.df <- p.df
+pb.df$intervention <- ifelse(pb.df$period==1, 0, pb.df$intervention)
+pb.df$time <- ifelse(pb.df$period==1, 0, 1)
+pb.df$time <- as.factor(pb.df$time)
+## View
+str(pb.df)
+table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$period)
+table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$time)
+```
+
+```{r Var ME vs FE data}
+# ME
+lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df) %>% summary()
+  #              Estimate Std. Error t value
+  # intervention  0.16029    0.11379   1.409
+# # ME numerical check
+summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df))$varcor
+tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df))$varcor)$vcov[1]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df))$varcor)$vcov[2]
+sigma2_w
+sigma2 <- sigma2_w/n
+sigma2
+gamma <- tau2/(tau2+sigma2)
+gamma
+(sigma2 + tau2)*(4/I)*( (1+(J-2)*gamma)/(J-1) - (gamma^2)) # numerical result
+(sigma2_w)*(1/n) * 4 * (1/(I/2)) * ((2*tau2 + sigma2_w/n) / (2*tau2 + 2*sigma2_w/n)) # simplified numerical result
+MEvar <- ( summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df))$coefficients[,"Std. Error"]["intervention"] )^2
+MEvar
+# varcov matrix
+lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df) %>% vcov()
+# check numerical results - checks out
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * (4*((sigma2+tau2)^2-tau2^2))
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * 4*(sigma2+tau2)*tau2
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * -2*((sigma2+tau2)^2-tau2^2)
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * (sigma2+tau2)^2
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * (sigma2+tau2)*tau2
+# (1/(I/2))*(1/2)*(1/(sigma2+tau2)) * (2*(sigma2+tau2)^2-tau2^2)
+
+# FE
+lm(outcome ~ intervention + time + cluster, data = pb.df) %>% summary()
+                 # Estimate Std. Error t value Pr(>|t|)    
+  # intervention  1.440e-01  1.140e-01   1.263    0.207
+# # FE numerical check
+sigma2_w <- summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$sigma^2
+sigma2_w * (1/n) * (1/(I/2)) * 4 # numerical result
+FEvar <- ( summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Std. Error"]["intervention"] )^2
+FEvar
+
+# variance ratio
+FEvar/MEvar
+((2*tau2 + 2*sigma2_w/n) / (2*tau2 + sigma2_w/n)) # numerical derivation
+1 + ((sigma2_w/n) / (2*tau2 + sigma2_w/n)) # numerical derivation
+
+```
+
+```{r Check FE point estimate}
+table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$time)
+pb.df$Z <- ifelse(pb.df$cluster %in% c(4, 5, 6), 1, 0)
+table(pb.df[pb.df$Z==1,]$cluster, pb.df[pb.df$Z==1,]$time)
+
+lm(outcome ~ intervention + time + cluster, data = pb.df) %>% summary()
+summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+test2 <- rbind(
+  c(2,2,1,1,0,0),
+  c(2,4,1,1,1,1),
+  c(1,1,2,0,0,0),
+  c(1,1,0,2,0,0),
+  c(0,1,0,0,2,0),
+  c(0,1,0,0,0,2)
+)
+solve(test2)*2
+
+test3 <- rbind(
+  c(3,3,1,1,1,0,0,0),
+  c(3,6,1,1,1,1,1,1),
+  c(1,1,2,0,0,0,0,0),
+  c(1,1,0,2,0,0,0,0),
+  c(1,1,0,0,2,0,0,0),
+  c(0,1,0,0,0,2,0,0),
+  c(0,1,0,0,0,0,2,0),
+  c(0,1,0,0,0,0,0,2)
+)
+solve(test3)*3
+
+# check numerical derivation
+str(pb.df)
+sum(filter(pb.df, time=="1" & cluster %in% c(4, 5, 6))$outcome)
+sum(filter(pb.df, time=="1" & cluster %in% c(1, 2, 3))$outcome)
+sum(filter(pb.df, time=="1" & Z==1)$outcome)
+sum(filter(pb.df, time=="1" & Z==0)$outcome)
+sum(filter(pb.df, Z==1)$outcome)
+sum(filter(pb.df, Z==0)$outcome)
+
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+
+```
+
+```{r Check ME point estimate}
+lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df)
+
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+
+(sum(filter(pb.df, time=="1", Z==1)$outcome) - sum(filter(pb.df, time=="1", Z==0)$outcome))/(n*I/2) - (tau2/(sigma2+tau2))*(sum(filter(pb.df, time=="0", Z==1)$outcome) - sum(filter(pb.df, time=="0", Z==0)$outcome))/(n*I/2)
+```
+
+```{r closed-cohort PB-CRT ME var}
+head(pb.df)
+# N <- nrow(pb.df)/2
+N <- nrow(pb.df) # total number of observations
+table(pb.df$cluster, pb.df$period)
+# total number of samples
+ind <- nrow(pb.df)/2
+pb.df$ind <- rep(1:ind, each=2)
+pb.df$ind <- factor(pb.df$ind)
+
+# ME
+summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|ind), data = pb.df))
+#              Estimate Std. Error t value
+# intervention  0.16002    0.11287   1.418
+
+# FE
+summary(lm(outcome ~ intervention + time + ind, data = pb.df))
+#                Estimate Std. Error t value Pr(>|t|)
+# intervention  0.143993   0.113095   1.273 0.203441    
+
+# FE formula
+sigma2_w_cc <- summary(lm(outcome ~ intervention + time + ind, data = pb.df))$sigma^2
+sigma2_w_cc
+sigma2_w
+sigma2_w_cc * (1/(N/2)) * 8 # numerical result
+FEvar <- ( summary(lm(outcome ~ intervention + time + ind, data = pb.df))$coefficients[,"Std. Error"]["intervention"] )^2
+FEvar
+( summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Std. Error"]["intervention"] )^2
+
+
+MEvar <- (summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|ind), data = pb.df))$coefficients[,"Std. Error"]["intervention"] )^2
+summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|ind), data = pb.df))$varcor
+
+# ME formula
+table(pb.df$cluster, pb.df$period)
+I=6
+J=2
+K=(N/I)/J
+K
+sigma2_w_cc_ME <- summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|ind), data = pb.df))$sigma^2
+tau2_ind_cc <- attributes(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|ind), data = pb.df))$varcor[1]$ind)$stddev^2
+# tau2_ind_cc <- 0.12561^2 
+tau2_cluster_cc <- attributes(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|ind), data = pb.df))$varcor[2]$cluster)$stddev^2
+# tau2_cluster_cc <- 1.08946^2
+# Variance Formula
+sigma2_w_cc_ME*(8/N)*((sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc)*(sigma2_w_cc_ME+2*tau2_ind_cc)) / ((sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc)*(sigma2_w_cc_ME+tau2_ind_cc)-K*tau2_cluster_cc*sigma2_w_cc_ME) # Correct
+MEvar
+
+
+# checks
+omega = (tau2_ind_cc+sigma2_w_cc_ME)/((sigma2_w_cc_ME+2*tau2_ind_cc)*sigma2_w_cc_ME) - tau2_cluster_cc/((sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc)*(sigma2_w_cc_ME+2*tau2_ind_cc))
+gamma = -(tau2_ind_cc)/((sigma2_w_cc_ME+2*tau2_ind_cc)*sigma2_w_cc_ME) - tau2_cluster_cc/((sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc)*(sigma2_w_cc_ME+2*tau2_ind_cc))
+theta = -tau2_cluster_cc/((sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc)*(sigma2_w_cc_ME+2*tau2_ind_cc))
+omega
+theta
+(I/2)*(K)*(omega + (K-1)*theta)
+vcov(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|ind), data = pb.df)) %>% solve()
+```
+
+```{r closed-cohort PB-CRT FE point estimate}
+# FE estimator is the same as with cluster or individual point FEs
+summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+summary(lm(outcome ~ intervention + time + ind, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+
+# formula
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+
+```
+
+```{r closed-cohort PB-CRT ME point estimate}
+N <- nrow(pb.df) # total number of observations
+
+table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$time)
+
+# FE estimator (for reference)
+summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+summary(lm(outcome ~ intervention + time + ind, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+
+# ME cross-sectional point estimator (for reference)
+## original formula above
+(sum(filter(pb.df, time=="1", Z==1)$outcome) - sum(filter(pb.df, time=="1", Z==0)$outcome))/(n*I/2) - (tau2/(sigma2+tau2))*(sum(filter(pb.df, time=="0", Z==1)$outcome) - sum(filter(pb.df, time=="0", Z==0)$outcome))/(n*I/2)
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+# with generalized MEcsterm
+MEcsterm <- tau2/(sigma2+tau2)
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-MEcsterm*sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-MEcsterm*sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+
+# ME closed cohort model results
+MEccpoint <- (summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|ind), data = pb.df))$coefficients[,"Estimate"]["intervention"] )
+MEccpoint
+
+# ME closed cohort formula results
+sigma2_w_cc_ME
+tau2_ind_cc
+tau2_cluster_cc
+MEccterm <- (tau2_ind_cc*(sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc) + K*tau2_cluster_cc*sigma2_w_cc_ME) / ((tau2_ind_cc+sigma2_w_cc_ME)*(sigma2_w_cc_ME+2*tau2_ind_cc+2*K*tau2_cluster_cc) - K*tau2_cluster_cc*sigma2_w_cc_ME)
+MEccterm
+MEcsterm
+(1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-MEccterm*sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-MEccterm*sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+MEccpoint
+
+(sum(filter(pb.df, time=="1", Z==1)$outcome) - sum(filter(pb.df, time=="1", Z==0)$outcome))/(n*I/2) - (tau2/(sigma2+tau2))*(sum(filter(pb.df, time=="0", Z==1)$outcome) - sum(filter(pb.df, time=="0", Z==0)$outcome))/(n*I/2)
+
+```
+
+```{r GEE vs ME}
+lme4::lmer(outcome ~ intervention + (1|cluster), data = pb.df) %>% summary()
+
+summary(geepack::geeglm(outcome ~ intervention, waves = intervention, id=cluster, corstr="exchangeable", data=pb.df))
+
+# different?
+```
+
+
+# Cross-sectional unequal cluster sizes
+
+```{r sim data}
+library(lme4)
+library(dplyr)
+
+I=6 # cluster
+J=2 # 2 periods
+# n=20
+n=100 # average clusterperiod sizes
+
+### Constant Intervention Effect ###
+
+## P-CRT
+set.seed(2525)
+# n_cp <- rpois(I*J, 100) # 2/22/2024 variable cp sizes
+n_cp <- rep(100, I*J) # equal cluster sizes
+n_cp
+cluster <- c()
+period <- c()
+for(i in 1:(length(n_cp)/2)){
+  cluster <- c(cluster, rep(i, each=n_cp[i]))
+  period <- c(period, rep(0, each=n_cp[i]))
+}
+ind <- 1:length(cluster)
+for(i in ((length(n_cp)/2)+1):length(n_cp)){
+    cluster<- c(cluster, rep(i-(length(n_cp)/2), each=n_cp[i]))
+    period <- c(period, rep(1, each=n_cp[i]))
+}
+table(cluster, period) # check
+n_cp # check
+
+pb.df2 <- data.frame(
+  cluster = cluster,
+  period = period
+)
+pb.df2 %>% str()
+table(pb.df2$cluster, pb.df2$period)
+pb.df2$intervention <- ifelse(pb.df2$cluster>3 & pb.df2$period==1, 1, 0)
+table(pb.df2[pb.df2$intervention==1,]$cluster, pb.df2[pb.df2$intervention==1,]$period)
+
+# generate a time variable because idk why tbh
+pb.df2$time <- ifelse(pb.df2$period==1,1,0)
+
+# generate some nonsense outcome
+pb.df2$outcome <- rnorm(n=nrow(pb.df2), mean=3, sd=1)
+
+# factor everything
+pb.df2$cluster <- as.factor(pb.df2$cluster)
+pb.df2$time <- as.factor(pb.df2$time)
+# pb.df2$intervention <- as.factor(pb.df2$intervention)
+
+# generate Z variable for sequence
+table(pb.df2$cluster, pb.df2$period)
+table(pb.df2[pb.df2$intervention==1,]$cluster, pb.df2[pb.df2$intervention==1,]$period)
+pb.df2$Z <- ifelse(pb.df2$cluster %in% c(4,5,6), 1, 0)
+# check
+table(pb.df2$cluster, pb.df2$period)
+table(pb.df2$Z, pb.df2$period)
+
+# p.df <- data.frame(
+#   cluster= as.factor(rep(1:I,each=n*J)),
+#   period= as.factor(rep(1:J, n*I)),
+#   intervention= c(rep(0, n*J*(I/2)), rep(1, n*J*(I/2))),
+#   outcome=c(
+#     rnorm(n=n*J*(I/2), mean=3, sd=1), # control
+#     rnorm(n=n*J*(I/2), mean=5, sd=1) # intervention
+#   )
+# )
+# ## Sim PB-CRT
+# pb.df <- p.df
+# pb.df$intervention <- ifelse(pb.df$period==1, 0, pb.df$intervention)
+# pb.df$time <- as.factor(pb.df$time)
+## View
+# str(pb.df)
+# table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$period)
+# table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$time)
+```
+
+```{r FE variance estimate}
+table(pb.df2$cluster, pb.df2$period)
+
+(summary(lm(outcome ~ intervention + time + cluster, data = pb.df2))$coefficients[,"Std. Error"]["intervention"])^2
+
+sigma2_w <- summary(lm(outcome ~ intervention + time + cluster, data = pb.df2))$sigma^2
+
+# [WRONG] a bit different? # is it by cluster, not by sequence?
+sigma2_w * ( 1/length(filter(pb.df2, time=="1" & Z==1)$outcome) + 1/length(filter(pb.df2, time=="0" & Z==1)$outcome) + 1/length(filter(pb.df2, time=="1" & Z==0)$outcome) + 1/length(filter(pb.df2, time=="0" & Z==0)$outcome) )
+# but why is this a bit different? Shouldn't this be identical?
+# Is this close enough?
+
+# Should be correct
+sigma2_w *(
+  1/(
+    ( length(filter(pb.df2, time=="1" & cluster==1)$outcome) * length(filter(pb.df2, time=="0" & cluster==1)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==1)$outcome) + length(filter(pb.df2, time=="0" & cluster==1)$outcome)) ) + 
+      ( length(filter(pb.df2, time=="1" & cluster==2)$outcome) * length(filter(pb.df2, time=="0" & cluster==2)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==2)$outcome) + length(filter(pb.df2, time=="0" & cluster==2)$outcome)) ) +
+      ( length(filter(pb.df2, time=="1" & cluster==3)$outcome) * length(filter(pb.df2, time=="0" & cluster==3)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==3)$outcome) + length(filter(pb.df2, time=="0" & cluster==3)$outcome)) )
+  ) 
+  +
+    1/(
+      ( length(filter(pb.df2, time=="1" & cluster==4)$outcome) * length(filter(pb.df2, time=="0" & cluster==4)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==4)$outcome) + length(filter(pb.df2, time=="0" & cluster==4)$outcome)) ) + 
+        ( length(filter(pb.df2, time=="1" & cluster==5)$outcome) * length(filter(pb.df2, time=="0" & cluster==5)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==5)$outcome) + length(filter(pb.df2, time=="0" & cluster==5)$outcome)) ) +
+        ( length(filter(pb.df2, time=="1" & cluster==6)$outcome) * length(filter(pb.df2, time=="0" & cluster==6)$outcome) )/( (length(filter(pb.df2, time=="1" & cluster==6)$outcome) + length(filter(pb.df2, time=="0" & cluster==6)$outcome)) )
+    )
+)
+
+
+
+
+
+test <- filter(pb.df2, cluster %in% c(1,4))
+(summary(lm(outcome ~ intervention + time + cluster, data = test))$coefficients[,"Std. Error"]["intervention"])^2
+sigma2_w <- summary(lm(outcome ~ intervention + time + cluster, data = test))$sigma^2
+sigma2_w * ( 1/length(filter(test, time=="1" & Z==1)$outcome) + 1/length(filter(test, time=="0" & Z==1)$outcome) + 1/length(filter(test, time=="1" & Z==0)$outcome) + 1/length(filter(test, time=="0" & Z==0)$outcome) )
+# identical with 2 clusters!
+
+
+## by cluster, also different...
+# sigma2_w*(
+#   1/length(filter(pb.df2, time=="1" & cluster==1)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==1)$outcome) +
+#     1/length(filter(pb.df2, time=="1" & cluster==2)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==2)$outcome) +
+#     1/length(filter(pb.df2, time=="1" & cluster==3)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==3)$outcome) +
+#     1/length(filter(pb.df2, time=="1" & cluster==4)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==4)$outcome) +
+#     1/length(filter(pb.df2, time=="1" & cluster==5)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==5)$outcome) +
+#     1/length(filter(pb.df2, time=="1" & cluster==6)$outcome) + 1/length(filter(pb.df2, time=="0" & cluster==6)$outcome)
+# )
+
+```
+
+```{r FE point estimate}
+# with variable cluster sizes
+summary(lm(outcome ~ intervention + time + cluster, data = pb.df2))$coefficients[,"Estimate"]["intervention"]
+
+# different (expected)
+(1/n)*(1/(I/2))*( (sum(filter(pb.df2, time=="1" & Z==1)$outcome)-sum(filter(pb.df2, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df2, time=="1" & Z==0)$outcome)-sum(filter(pb.df2, time=="0" & Z==0)$outcome)) )
+# different (unexpected)
+( mean(filter(pb.df2, time=="1" & Z==1)$outcome) - mean(filter(pb.df2, time=="0" & Z==1)$outcome) ) - ( mean(filter(pb.df2, time=="1" & Z==0)$outcome) - mean(filter(pb.df2, time=="0" & Z==0)$outcome) )
+
+
+# try with our newly derived FE estimator
+table(pb.df2$cluster, pb.df2$period)
+table(pb.df2[pb.df2$intervention==1,]$cluster, pb.df2[pb.df2$intervention==1,]$period)
+
+test <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(test) <- c("cluster", "period", "Freq")
+test <- merge(
+  merge(test, 
+        aggregate(outcome ~ cluster + period, data=pb.df2, sum),
+        by = c("cluster", "period")
+  ),
+  aggregate(Z ~ cluster + period, data=pb.df2, mean),
+  by = c("cluster", "period")
+)
+test
+test <- merge(
+  test,
+  aggregate(Freq ~ cluster, data=test, sum),
+  by = c("cluster")
+)
+test
+colnames(test) <- c("cluster", "period", "Freq", "outcome", "Z", "Freq.cluster")
+test
+test <- merge(
+  test,
+  select(test, c("cluster", "period", "Freq")) %>% mutate(period=(as.numeric(period)-2)*-1) %>% rename(Freq.opp = Freq),
+  by = c("cluster", "period")
+)
+test$weight <- test$Freq.opp/test$Freq.cluster
+test
+test$outcome.weighted <- test$outcome * test$weight
+test
+
+weighttrt <- 1/(
+  ( (filter(test, cluster==4, period==0)$Freq*filter(test, cluster==4, period==1)$Freq) )/( (filter(test, cluster==4, period==0)$Freq+filter(test, cluster==4, period==1)$Freq) ) +
+    ( (filter(test, cluster==5, period==0)$Freq*filter(test, cluster==5, period==1)$Freq) )/( (filter(test, cluster==5, period==0)$Freq+filter(test, cluster==5, period==1)$Freq) ) +
+    ( (filter(test, cluster==6, period==0)$Freq*filter(test, cluster==6, period==1)$Freq) )/( (filter(test, cluster==6, period==0)$Freq+filter(test, cluster==6, period==1)$Freq) )
+)
+weightctrl <- 1/(
+  ( (filter(test, cluster==1, period==0)$Freq*filter(test, cluster==1, period==1)$Freq) )/( (filter(test, cluster==1, period==0)$Freq+filter(test, cluster==1, period==1)$Freq) ) +
+    ( (filter(test, cluster==2, period==0)$Freq*filter(test, cluster==2, period==1)$Freq) )/( (filter(test, cluster==2, period==0)$Freq+filter(test, cluster==2, period==1)$Freq) ) +
+    ( (filter(test, cluster==3, period==0)$Freq*filter(test, cluster==3, period==1)$Freq) )/( (filter(test, cluster==3, period==0)$Freq+filter(test, cluster==3, period==1)$Freq) )
+)
+weighttrt
+weightctrl
+
+weighttrt*( sum(filter(test, Z==1, period==1)$outcome.weighted) - sum(filter(test, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(test, Z==0, period==1)$outcome.weighted) - sum(filter(test, Z==0, period==0)$outcome.weighted) )
+
+
+# # with fixed cluster sizes
+# summary(lm(outcome ~ intervention + time + cluster, data = pb.df))$coefficients[,"Estimate"]["intervention"]
+# # same
+# (1/n)*(1/(I/2))*( (sum(filter(pb.df, time=="1" & Z==1)$outcome)-sum(filter(pb.df, time=="0" & Z==1)$outcome)) - (sum(filter(pb.df, time=="1" & Z==0)$outcome)-sum(filter(pb.df, time=="0" & Z==0)$outcome)) )
+# # same
+# ( mean(filter(pb.df, time=="1" & Z==1)$outcome) - mean(filter(pb.df, time=="0" & Z==1)$outcome) ) - ( mean(filter(pb.df, time=="1" & Z==0)$outcome) - mean(filter(pb.df, time=="0" & Z==0)$outcome) )
+
+
+```
+
+```{r Cluster-means equals weighted FE point estimate}
+# normal FE with variable cluster sizes [messy equation]
+summary(lm(outcome ~ intervention + time + cluster, data = pb.df2))$coefficients[,"Estimate"]["intervention"]
+
+testmeans <- aggregate(outcome ~ cluster + period + Z, data=pb.df2, mean)
+testmeans
+testmeans <- merge(
+  testmeans,
+  aggregate(outcome ~ cluster + period + Z, data=pb.df2, length) %>% rename(Freq = outcome),
+  by = c("cluster", "period", "Z")
+)
+testmeans$intervention <- testmeans$period * testmeans$Z
+testmeans$outcome.weighted <- testmeans$outcome/testmeans$Freq
+
+# FE with sequence FE (ind data)
+summary(lm(outcome ~ intervention + period + factor(Z), data = pb.df2))$coefficients[,"Estimate"]["intervention"]
+# this is sequence means, so it's different
+( mean(filter(pb.df2, time=="1" & Z==1)$outcome) - mean(filter(pb.df2, time=="0" & Z==1)$outcome) ) - ( mean(filter(pb.df2, time=="1" & Z==0)$outcome) - mean(filter(pb.df2, time=="0" & Z==0)$outcome) )
+
+# FE with the cluster means
+# I think this is literally the UATE
+# by cluster FE
+summary(lm(outcome ~ intervention + period + factor(cluster), data = testmeans))$coefficients[,"Estimate"]["intervention"]
+# by sequence FE
+## same result as cluster FE with cluster means
+## * This is the "weighted" sequence FE.
+summary(lm(outcome ~ intervention + period + factor(Z), data = testmeans))$coefficients[,"Estimate"]["intervention"]
+# derived estimator w/ cluster means
+( mean(filter(testmeans, period==1 & Z==1)$outcome) - mean(filter(testmeans, period==0 & Z==1)$outcome) ) - ( mean(filter(testmeans, period==1 & Z==0)$outcome) - mean(filter(testmeans, period==0 & Z==0)$outcome) )
+
+# # weighted cluster means
+# ( mean(filter(testmeans, period==1 & Z==1)$outcome.weighted) - mean(filter(testmeans, period==0 & Z==1)$outcome.weighted) ) - ( mean(filter(testmeans, period==1 & Z==0)$outcome.weighted) - mean(filter(testmeans, period==0 & Z==0)$outcome.weighted) )
+# # I don't think this is correct...
+
+testmeans %>% head()
+pb.df2 %>% head()
+pb.dfweighted <- merge(
+  pb.df2,
+  select(testmeans, c("cluster","period","Z","Freq")),
+  by=c("cluster","period","Z")
+)
+# summary(lm(outcome ~ intervention + time + cluster, data = pb.df2))$coefficients[,"Estimate"]["intervention"]
+# summary(lm(outcome ~ intervention + time + cluster, data = pb.dfweighted))$coefficients[,"Estimate"]["intervention"]
+
+# weighted FE, same as cluster means
+summary(lm(outcome ~ intervention + time + cluster, data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"]
+
+( mean(filter(testmeans, period==1 & Z==1)$outcome) - mean(filter(testmeans, period==0 & Z==1)$outcome) ) - ( mean(filter(testmeans, period==1 & Z==0)$outcome) - mean(filter(testmeans, period==0 & Z==0)$outcome) )
+
+# 2/16/2024
+library(dplyr)
+testFEavgweight <- 
+  merge(
+    pb.dfweighted,
+    testmeans %>%
+      group_by(cluster) %>%
+      mutate(ClusterFreq.sum = sum(Freq),
+             ClusterFreq.avg = mean(Freq)) %>%
+      select(-outcome, -Freq),
+    by=c("cluster","period","Z", "intervention")
+  )
+  
+pb.dfweighted %>% colnames
+testFEavgweight %>% colnames
+# sum cluster-freq weights aren't the same as CP-freq
+summary(lm(outcome ~ intervention + time + cluster, data = testFEavgweight, weights=1/testFEavgweight$ClusterFreq.sum))$coefficients[,"Estimate"]["intervention"]
+# avg cluster-freq weights aren't the same as CP-freq
+summary(lm(outcome ~ intervention + time + cluster, data = testFEavgweight, weights=1/testFEavgweight$ClusterFreq.avg))$coefficients[,"Estimate"]["intervention"]
+
+```
+
+```{r ME point estimate}
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[1]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[2]
+sigma2_w
+# sigma2 <- sigma2_w/n
+# sigma2 <- sigma2_w/mean(table(pb.df2$cluster, pb.df2$period))
+
+# from FE estimator
+weighttrt*( sum(filter(test, Z==1, period==1)$outcome.weighted) - sum(filter(test, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(test, Z==0, period==1)$outcome.weighted) - sum(filter(test, Z==0, period==0)$outcome.weighted) )
+# with corresponding ME term
+weighttrt*( sum(filter(test, Z==1, period==1)$outcome.weighted) - (tau2/(sigma2+tau2))*sum(filter(test, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(test, Z==0, period==1)$outcome.weighted) - (tau2/(sigma2+tau2))*sum(filter(test, Z==0, period==0)$outcome.weighted) )
+
+# ugh crap it's not the same... does it not extend...
+# it's probably because sigma2_w/n is not correct with variable cluster sizes...
+
+(tau2/(sigma2+tau2))
+(tau2/(sigma2_w+tau2))
+
+# Guess attempts to extend
+MEtest <- test
+MEtest
+# MEtest$ICC2 <- (tau2/(sigma2_w/((MEtest$Freq + MEtest$Freq.opp)/2)+tau2))
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==1, period==0)$ICC2 * filter(MEtest, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==0)$ICC2 * filter(MEtest, Z==0, period==0)$outcome.weighted) )
+# # nope, I'm just guessing here...
+# MEtest$ICC <- (tau2/(sigma2_w+tau2))
+# # MEtest$ICC.weight <- 1/(1+(MEtest$Freq+MEtest$Freq.opp-1)*MEtest$ICC)
+# MEtest$ICC.weight <- 1/(1+(MEtest$Freq-1)*MEtest$ICC)
+# MEtest
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted/filter(MEtest, Z==1, period==1)$ICC.weight) - sum(filter(MEtest, Z==1, period==0)$outcome.weighted/filter(MEtest, Z==1, period==0)$ICC.weight) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted/filter(MEtest, Z==0, period==1)$ICC.weight) - sum(filter(MEtest, Z==0, period==0)$outcome.weighted/filter(MEtest, Z==0, period==0)$ICC.weight) )
+# # nope, this guess doesn't work either
+
+# (2/1/2024) attempt to test equation
+MEtest$Ki1 <- ifelse(MEtest$period==0, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ki2 <- ifelse(MEtest$period==1, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ai <- MEtest$Ki2*(1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ci <- MEtest$Ki1*(1/sigma2_w)*(sigma2_w+MEtest$Ki2*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Di1 <- MEtest$Ci/MEtest$Ki1  # that mess about Di + (Ki1-1)Fi
+MEtest$Di2 <- MEtest$Ai/MEtest$Ki2 # that mess about Di + (Ki2-1)Fi
+MEtest$Fi <- MEtest$Bi/(MEtest$Ki1*MEtest$Ki2)
+MEtest
+
+MEtestnumerator <- (
+  sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==1,period==0)$Bi)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest,Z==0,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)+sum(filter(MEtest,Z==0,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Ai)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest,period==0)$Di1
+      filter(MEtest,period==0)$Ci
+      *(1/filter(MEtest,period==0)$Freq)
+      *filter(MEtest,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Ki1
+      # *filter(MEtest,Z==1,period==1)$Fi
+      filter(MEtest,Z==1,period==1)$Bi
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Ki1
+      # *filter(MEtest,Z==0,period==1)$Fi
+      filter(MEtest,Z==0,period==1)$Bi
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+)
+MEtestdenominator <- (
+  sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,period==1)$Ci)
+  -sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Bi)*sum(filter(MEtest,Z==0,period==1)$Bi)
+  -sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,Z==1,period==1)$Bi)*sum(filter(MEtest,Z==1,period==1)$Bi)
+)
+MEtestnumerator
+MEtestdenominator # also the determinant, CONFIRM CORRECT BASED ON VARIANCE ESTIMATOR
+
+# [CORRECT] Point Estimator is then:
+MEtestnumerator/MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+# [CORRECT] Variance Estimator is then:
+(sum(filter(MEtest,period==1)$Ci)*sum(filter(MEtest,period==1)$Ai)-sum(filter(MEtest,period==1)$Bi)*sum(filter(MEtest,period==1)$Bi)) / MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Std. Error"]["intervention"] )^2
+
+
+# # expected value formula?
+# MEtest <- select(test, -c(weight, outcome.weighted, outcome))
+# MEtest
+# MEtest <- merge(pb.df2, MEtest, by = c("cluster","period", "Z"))
+# nrow(MEtest)
+# nrow(pb.df2)
+# MEtest$weight <- (sigma2_w+MEtest$Freq.opp*tau2) / (sigma2_w + MEtest$Freq.cluster*tau2)
+# MEtest$outcome.weighted <- MEtest$outcome * MEtest$weight
+# # test expected value (though I'm not sure what this is supposed to be equivalent to)
+# (sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==1)$outcome.weighted)) / sum(((sigma2_w + filter(test, period==1)$Freq.opp*tau2) / (sigma2_w + filter(test, period==1)$Freq.cluster*tau2)) * (filter(test,period==1)$Freq))
+# # It looks like it's too high...
+```
+
+This is incorrect, the "whitening" I think I'm definining is actually wrong
+```{r manual weighted ME point estimate}
+# # [TRUE] weighted ME (a bit different from cluster means, probably because of random coefficients)
+# (summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] )
+# 
+# # ME with the cluster means
+# # cluster RE
+# (summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = testmeans))$coefficients[,"Estimate"]["intervention"] )
+# # sequence RE (a bit different than above, probably due to estimation of tau2?)
+# (summary(lme4::lmer(outcome ~ intervention + period-1 + (1|Z), data = testmeans))$coefficients[,"Estimate"]["intervention"] )
+# 
+# # # ME tau2 sigma2_w
+# # tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.dfweighted))$varcor)$vcov[1]
+# # tau2
+# # sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.dfweighted))$varcor)$vcov[2]
+# # sigma2_w
+# 
+# # MEW tau2 sigma2_w
+# tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$varcor)$vcov[1]
+# tau2
+# sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$varcor)$vcov[2]
+# sigma2_w
+
+# # # With WeMix (confirmed to work with P-CRT below)
+# # # https://search.r-project.org/CRAN/refmans/WeMix/html/mix.html 
+# library(WeMix)
+# pb.dfweighted %>% str
+# table(pb.dfweighted$Freq, pb.dfweighted$time)
+# pb.dfweighted$invFreq <- 1/pb.dfweighted$Freq
+# lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.dfweighted)
+# WeMix::mix(outcome ~ intervention + time + (1|cluster), data=pb.dfweighted, weights=c("invFreq", "invFreq"))  # doesn't work
+
+# with weighted regression lmer
+pb.dfweighted$outcome_weighted <- pb.dfweighted$outcome/sqrt(pb.dfweighted$Freq)
+pb.dfweighted$intervention_weighted <- pb.dfweighted$intervention/sqrt(pb.dfweighted$Freq)
+pb.dfweighted$time_weighted <- (as.numeric(pb.dfweighted$time)-1)/sqrt(pb.dfweighted$Freq)
+pb.dfweighted$intercept_weighted <- 1/sqrt(pb.dfweighted$Freq)
+lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + time_weighted + (1|cluster), data = pb.dfweighted)
+
+tau2 <- as.data.frame(summary(lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + time_weighted + (1|cluster), data = pb.dfweighted))$varcor)$vcov[1]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + time_weighted + (1|cluster), data = pb.dfweighted))$varcor)$vcov[2]
+sigma2_w
+ICC <- tau2/(tau2 + sigma2_w)
+
+MEtest.weight <- test
+MEtest.weight
+
+# (2/1/2024) attempt to test equation
+MEtest.weight$Ki1 <- ifelse(MEtest.weight$period==0, MEtest.weight$Freq, MEtest.weight$Freq.opp)
+MEtest.weight$Ki2 <- ifelse(MEtest.weight$period==1, MEtest.weight$Freq, MEtest.weight$Freq.opp)
+
+# MEtest.weight$Ai <- # MEtest.weight$Ki2*
+#   (1/sigma2_w)*(sigma2_w+MEtest.weight$Ki1*tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2)
+MEtest.weight$Ai <- ((1+(MEtest.weight$Ki1-1)*ICC) / (1+(MEtest.weight$Ki1+MEtest.weight$Ki2-1)*ICC))
+
+# MEtest.weight$Bi <- - MEtest.weight$Ki1*MEtest.weight$Ki2*(1/sqrt(MEtest.weight$Ki1))*(1/sqrt(MEtest.weight$Ki2))* #MEtest.weight$Ki1*MEtest.weight$Ki2*
+#   (1/sigma2_w)*(tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2)
+MEtest.weight$Bi <- - MEtest.weight$Ki1*MEtest.weight$Ki2*(1/sqrt(MEtest.weight$Ki1))*(1/sqrt(MEtest.weight$Ki2))*(ICC / (1+(MEtest.weight$Ki1+MEtest.weight$Ki2-1)*ICC))
+
+# MEtest.weight$Ci <- #MEtest.weight$Ki1*
+# (1/sigma2_w)*(sigma2_w+MEtest.weight$Ki2*tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2)
+MEtest.weight$Ci <- ((1+(MEtest.weight$Ki2-1)*ICC) / (1+(MEtest.weight$Ki1+MEtest.weight$Ki2-1)*ICC))
+
+## Attempt 1
+# MEtest.weight$Di1 <- MEtest.weight$Ci/MEtest.weight$Ki1  # that mess about Di + (Ki1-1)Fi
+# MEtest.weight$Di2 <- MEtest.weight$Ai/MEtest.weight$Ki2 # that mess about Di + (Ki2-1)Fi
+# MEtest.weight$Fi <- MEtest.weight$Bi/(MEtest.weight$Ki1*MEtest.weight$Ki2)
+## Attempt 2
+# MEtest.weight$DiA <- (1/sigma2_w)*(sigma2_w+MEtest.weight$Ki2*tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2) # corresponding to Ai
+# MEtest.weight$DiC <- (1/sigma2_w)*(sigma2_w+MEtest.weight$Ki1*tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2) #corresponding to Ci
+# MEtest.weight$Fi <- (1/sigma2_w)*(tau2)/(sigma2_w+MEtest.weight$Freq.cluster*tau2) # corresponding to B
+
+# MEtest.weight
+
+MEtest.weightnumerator <- (
+  sum(filter(MEtest.weight,Z==1,period==0)$Bi)*sum(filter(MEtest.weight,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest.weight,Z==0,period==0)$Ki2
+      # *filter(MEtest.weight,Z==0,period==0)$Fi
+        filter(MEtest.weight,Z==0,period==0)$Bi
+        *(1/filter(MEtest.weight,Z==0,period==0)$Freq)
+      *filter(MEtest.weight,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest.weight,Z==1,period==0)$Ki2
+      # *filter(MEtest.weight,Z==1,period==0)$Fi
+        filter(MEtest.weight,Z==1,period==0)$Bi
+        *(1/filter(MEtest.weight,Z==1,period==0)$Freq)
+      *filter(MEtest.weight,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest.weight,Z==0,period==1)$DiA
+        filter(MEtest.weight,Z==0,period==1)$Ai
+        *(1/filter(MEtest.weight,Z==0,period==1)$Freq)
+      *filter(MEtest.weight,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest.weight,Z==1,period==1)$DiA
+        filter(MEtest.weight,Z==1,period==1)$Ai
+        *(1/filter(MEtest.weight,Z==1,period==1)$Freq)
+      *filter(MEtest.weight,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest.weight,Z==1,period==0)$Bi)*sum(filter(MEtest.weight,Z==1,period==0)$Bi)-sum(filter(MEtest.weight,Z==1,period==0)$Ai)*sum(filter(MEtest.weight,period==0)$Ci))*(
+    sum(
+      # filter(MEtest.weight,Z==0,period==0)$Ki2
+      # *filter(MEtest.weight,Z==0,period==0)$Fi
+        filter(MEtest.weight,Z==0,period==0)$Bi
+        *(1/filter(MEtest.weight,Z==0,period==0)$Freq)
+      *filter(MEtest.weight,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest.weight,Z==0,period==1)$DiA
+        filter(MEtest.weight,Z==0,period==1)$Ai
+        *(1/filter(MEtest.weight,Z==0,period==1)$Freq)
+      *filter(MEtest.weight,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest.weight,Z==0,period==0)$Bi)*sum(filter(MEtest.weight,Z==0,period==0)$Bi)+sum(filter(MEtest.weight,Z==0,period==0)$Ai)*sum(filter(MEtest.weight,period==0)$Ci))*(
+    sum(
+      # filter(MEtest.weight,Z==1,period==0)$Ki2
+      # *filter(MEtest.weight,Z==1,period==0)$Fi
+        filter(MEtest.weight,Z==1,period==0)$Bi
+        *(1/filter(MEtest.weight,Z==1,period==0)$Freq)
+      *filter(MEtest.weight,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest.weight,Z==1,period==1)$DiA
+        filter(MEtest.weight,Z==1,period==1)$Ai
+        *(1/filter(MEtest.weight,Z==1,period==1)$Freq)
+      *filter(MEtest.weight,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest.weight,Z==1,period==0)$Bi)*sum(filter(MEtest.weight,Z==0,period==0)$Ai)-sum(filter(MEtest.weight,Z==1,period==0)$Ai)*sum(filter(MEtest.weight,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest.weight,period==0)$DiC
+        filter(MEtest.weight,period==0)$Ci
+        *(1/filter(MEtest.weight,period==0)$Freq)
+      *filter(MEtest.weight,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest.weight,Z==1,period==1)$Ki1
+      # *filter(MEtest.weight,Z==1,period==1)$Fi
+        filter(MEtest.weight,Z==1,period==1)$Bi
+        *(1/filter(MEtest.weight,Z==1,period==1)$Freq)
+      *filter(MEtest.weight,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest.weight,Z==0,period==1)$Ki1
+      # *filter(MEtest.weight,Z==0,period==1)$Fi
+        filter(MEtest.weight,Z==0,period==1)$Bi
+        *(1/filter(MEtest.weight,Z==0,period==1)$Freq)
+      *filter(MEtest.weight,Z==0,period==1)$outcome
+    )
+  )
+)
+
+MEtest.weightdenominator <- (
+  sum(filter(MEtest.weight,Z==1,period==1)$Ai)*sum(filter(MEtest.weight,Z==0,period==1)$Ai)*sum(filter(MEtest.weight,period==1)$Ci)
+  -sum(filter(MEtest.weight,Z==1,period==1)$Ai)*sum(filter(MEtest.weight,Z==0,period==1)$Bi)*sum(filter(MEtest.weight,Z==0,period==1)$Bi)
+  -sum(filter(MEtest.weight,Z==0,period==1)$Ai)*sum(filter(MEtest.weight,Z==1,period==1)$Bi)*sum(filter(MEtest.weight,Z==1,period==1)$Bi)
+)
+
+# compare # SAME
+MEtest.weightnumerator/MEtest.weightdenominator
+
+summary(lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + time_weighted + (1|cluster), data = pb.dfweighted))$coefficients[,"Estimate"]["intervention_weighted"] # this is correct, but the random effects are probably a bit off
+
+# (summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] )
+# # shit it's a bit different...
+# lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq)
+
+# vs FE
+(summary(lm(outcome ~ intervention + period-1 + cluster, data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] )
+
+```
+
+```{r WeMix with Cluster sizes (not cluster:period sizes)}
+
+```
+
+
+Should be more or less the same thing, at least with equal cluster sizes (specified in data simulation step)
+```{r [skip] cluster-means vs lmer weight}
+# normal lmer
+(summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = pb.dfweighted))$coefficients[,"Estimate"]["intervention"] )
+
+# weighted lmer (a bit different from cluster means, probably because of random coefficients)
+(summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = pb.dfweighted, weights=1/pb.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] )
+
+# ME with the cluster means
+# cluster RE
+(summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = testmeans))$coefficients[,"Estimate"]["intervention"] )
+# cluster means with weight (no difference)
+(summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = testmeans, weight=Freq))$coefficients[,"Estimate"]["intervention"] )
+
+
+# MEW with manual weighting
+summary(lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + time_weighted + (1|cluster), data = pb.dfweighted))$coefficients[,"Estimate"]["intervention_weighted"] # this is correct, but the random effects are probably a bit off
+
+# MEW with WeMix
+# # With WeMix (confirmed to work with P-CRT below)
+# # https://search.r-project.org/CRAN/refmans/WeMix/html/mix.html 
+library(WeMix)
+pb.dfweighted %>% str
+table(pb.dfweighted$Freq, pb.dfweighted$time)
+pb.dfweighted$invFreq <- 1/pb.dfweighted$Freq
+pb.dfweighted$tau2weights <- 1
+summary( WeMix::mix(outcome ~ intervention + time + (1|cluster), data=pb.dfweighted, weights=c("invFreq", "invFreq")) ) # works with equal cluster period sizes
+summary( WeMix::mix(outcome ~ intervention + time + (1|cluster), data=pb.dfweighted, weights=c("invFreq", "tau2weights")) ) # should be equal to lmer(weight)
+
+
+```
+Interesting that despite the estimates being more-or-less the same, the random effects are so different...
+        < SAME ESTIMATE >
+* wemix
+   2  cluster (Intercept) 4.900e-11
+   1 Residual             9.852e-01
+* Manual weighting
+cluster  (Intercept) 0.00000 
+Residual             0.09864
+* lmer (weight)
+cluster  (Intercept) 3.414e-09
+Residual             9.864e-02 < 1/10th the size! >
+* lmer
+cluster  (Intercept) 1.663e-09
+Residual             9.864e-01
+        < DIFFERENT ESTIMATE>
+* clustermeans (diff point estimator)
+ cluster  (Intercept) 0.05436 
+ Residual             0.05635 
+
+# P-CRT work
+
+lmer with weight option doesn't do what we want, it just weights the residuals rather than the entire variance-covariance matrix.
+```{r [try] P-CRT formula vs lmer with weight}
+library(dplyr)
+p.dfweighted <- pb.dfweighted %>% filter(period == 1)
+
+# create stronger cluster effect
+p.dfweighted$outcome<- p.dfweighted$outcome + sqrt(as.numeric(p.dfweighted$cluster))
+
+lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=1/p.dfweighted$Freq)
+
+# ICC calculation
+tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))$varcor)$vcov[1]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))$varcor)$vcov[2]
+sigma2_w
+ICC <- tau2/(tau2 + sigma2_w)
+ICC
+
+# ICC_weight calculation
+p.weights <- 1/p.dfweighted$Freq
+# p.weights <- p.dfweighted$Freq
+# p.weights <- sqrt(p.dfweighted$Freq)
+# p.weights <- 1/sqrt(p.dfweighted$Freq)
+tau2_weight <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=p.weights))$varcor)$vcov[1]
+tau2_weight
+sigma2_w_weight <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=p.weights))$varcor)$vcov[2]
+sigma2_w_weight
+ICC_weight <- tau2_weight/(tau2_weight + sigma2_w_weight)
+ICC_weight
+
+# marginal p.dfsum
+p.dfsum <- aggregate(outcome ~ cluster + period + Z, data=p.dfweighted, sum)
+p.dfsum <- merge(p.dfsum, unique(select(p.dfweighted,-outcome)), by=c("cluster","period","Z"))
+p.dfsum
+
+table(p.dfsum$cluster, p.dfsum$intervention)
+table(p.dfsum$cluster, p.dfsum$Z)
+# formula calculated ME for P-CRT
+
+# formula calculated ME for P-CRT
+sum( filter(p.dfsum, Z==1)$outcome/((1+(filter(p.dfsum, Z==1)$Freq-1)*ICC)) )/sum( filter(p.dfsum, Z==1)$Freq/(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC) ) -
+  sum( filter(p.dfsum, Z==0)$outcome/((1+(filter(p.dfsum, Z==0)$Freq-1)*ICC)) )/sum( filter(p.dfsum, Z==0)$Freq/(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC) )
+# ME
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))$coefficients[,"Estimate"]["intervention"]
+# # [SAME]
+
+# formula calculated weighted MEW for P-CRT # this is the correct formulation provided by two weights paper... (and I've derived it), why is it so different???
+sum( filter(p.dfsum, Z==1)$outcome/(filter(p.dfsum, Z==1)$Freq*(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight)) )/sum( 1/(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight) ) -
+  sum( filter(p.dfsum, Z==0)$outcome/(filter(p.dfsum, Z==0)$Freq*(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight)) )/sum( 1/(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight) ) # 0.779639
+# MEW
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=p.weights))$coefficients[,"Estimate"]["intervention"] # 0.7619547 
+# # [DIFFERENT]
+
+# sum( filter(p.dfsum, Z==1)$outcome*(sigma2_w_weight/(sigma2_w_weight+filter(p.dfsum, Z==1)$Freq*tau2_weight))/(filter(p.dfsum, Z==1)$Freq) )/sum( (sigma2_w_weight/(sigma2_w_weight+filter(p.dfsum, Z==1)$Freq*tau2_weight)) ) -
+  # sum( filter(p.dfsum, Z==0)$outcome/(filter(p.dfsum, Z==0)$Freq*(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight)) )/sum( 1/(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight) ) # 0.779639
+
+# no weight
+p.dfsum$weight_none <- 1/(sigma2_w+tau2*p.dfsum$Freq)
+# Original derived weighting
+p.dfsum$weight_original <- 1/((sigma2_w_weight+tau2_weight*p.dfsum$Freq)*p.dfsum$Freq)
+# Potential weighting 1
+p.dfsum$weight_potential1 <- 1/(sigma2_w_weight*p.dfsum$Freq+tau2_weight*(2*p.dfsum$Freq-1))
+# Potential weighting 2
+p.dfsum$weight_potential2 <- 1/((sigma2_w_weight+tau2_weight)*p.dfsum$Freq)
+
+# Weight tests w/ generalized equaution
+# no weight test (ME)
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))$coefficients[,"Estimate"]["intervention"] # 0.7591156 
+sum(filter(p.dfsum,Z==1)$outcome*filter(p.dfsum,Z==1)$weight_none)/sum(filter(p.dfsum,Z==1)$Freq*filter(p.dfsum,Z==1)$weight_none) - sum(filter(p.dfsum,Z==0)$outcome*filter(p.dfsum,Z==0)$weight_none)/sum(filter(p.dfsum,Z==0)$Freq*filter(p.dfsum,Z==0)$weight_none) # 0.7591156 [correct]
+
+# Weighted tests
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=1/p.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] # 0.7619547 
+# Original derived weighting
+sum(filter(p.dfsum,Z==1)$outcome*filter(p.dfsum,Z==1)$weight_original)/sum(filter(p.dfsum,Z==1)$Freq*filter(p.dfsum,Z==1)$weight_original) - sum(filter(p.dfsum,Z==0)$outcome*filter(p.dfsum,Z==0)$weight_original)/sum(filter(p.dfsum,Z==0)$Freq*filter(p.dfsum,Z==0)$weight_original) # 0.779639 [wrong]
+# Potential weighting 1
+sum(filter(p.dfsum,Z==1)$outcome*filter(p.dfsum,Z==1)$weight_potential1)/sum(filter(p.dfsum,Z==1)$Freq*filter(p.dfsum,Z==1)$weight_potential1) - sum(filter(p.dfsum,Z==0)$outcome*filter(p.dfsum,Z==0)$weight_potential1)/sum(filter(p.dfsum,Z==0)$Freq*filter(p.dfsum,Z==0)$weight_potential1) # 0.7620385 [wrong]
+# potential weighting 2
+sum(filter(p.dfsum,Z==1)$outcome*filter(p.dfsum,Z==1)$weight_potential2)/sum(filter(p.dfsum,Z==1)$Freq*filter(p.dfsum,Z==1)$weight_potential2) - sum(filter(p.dfsum,Z==0)$outcome*filter(p.dfsum,Z==0)$weight_potential2)/sum(filter(p.dfsum,Z==0)$Freq*filter(p.dfsum,Z==0)$weight_potential2) # 0.7619547 [correct]
+
+# # nlme & lmer same here w/o weights
+# summary(nlme::lme(outcome ~ intervention, random=~1|cluster, data=p.dfweighted))
+# summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))
+# 
+# # nlme & lmer same here with weights
+# summary(nlme::lme(outcome ~ intervention, random=~1|cluster, data=p.dfweighted, weights=~(1/p.weights)))
+# #         (Intercept)  Residual
+# # StdDev:    0.233085 0.1010168
+# # 
+# # Variance function:
+# #  Structure: fixed weights
+# #  Formula: ~1/p.weights 
+# # Fixed effects:  outcome ~ intervention 
+# #                 Value Std.Error  DF   t-value p-value
+# # (Intercept)  4.448927 0.1466663 591 30.333671  0.0000
+# # intervention 0.761955 0.2074175   4  3.673532  0.0213
+# summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=p.weights))
+# # Random effects:
+# #  Groups   Name        Variance Std.Dev.
+# #  cluster  (Intercept) 0.05433  0.2331  
+# #  Residual             0.01020  0.1010  
+# # Number of obs: 597, groups:  cluster, 6
+# # 
+# # Fixed effects:
+# #              Estimate Std. Error t value
+# # (Intercept)    4.4489     0.1467  30.334
+# # intervention   0.7620     0.2074   3.674
+# 
+# summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=sqrt(p.weights)))
+# 
+# summary(nlme::lme(outcome ~ intervention, random=~1|cluster, data=p.dfweighted, weights=nlme::varFixed(~(1/p.weights))))
+# # a bit different with varFixed
+# ?nlme::varFixed
+```
+
+```{r [try 2/23/2024] P-CRT cluster-means vs lmer weight}
+p.dfweighted %>% colnames
+testmeans.p <- aggregate(outcome ~ cluster + Z, data=p.dfweighted, mean)
+testmeans.p$cluster <- as.factor(testmeans.p$cluster)
+testmeans.p
+
+# normal lmer
+(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data = p.dfweighted))$coefficients[,"Estimate"]["intervention"] )
+
+# weighted lmer (a bit different from cluster means, probably because of random coefficients)
+(summary(lme4::lmer(outcome ~ intervention + (1|cluster), data = p.dfweighted, weights=1/p.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] )
+
+# ME with the cluster means
+# cluster RE
+(summary(lme4::lmer(outcome ~ Z + (1|cluster), data = testmeans.p))$coefficients[,"Estimate"]["Z"] )
+# cluster means with weight (no difference)
+(summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = testmeans, weight=Freq))$coefficients[,"Estimate"]["intervention"] )
+
+# MEW with WeMix
+# # With WeMix (confirmed to work with P-CRT below)
+# # https://search.r-project.org/CRAN/refmans/WeMix/html/mix.html 
+library(WeMix)
+summary( WeMix::mix(outcome ~ intervention  + (1|cluster), data=p.dfweighted, weights=c("invFreq", "invFreq")) ) # works with equal cluster period sizes
+
+
+# MEW with manual weighting
+summary(lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + (1|cluster), data = p.dfweighted))$coefficients[,"Estimate"]["intervention_weighted"] # this is correct, but the random effects are probably a bit off
+```
+
+
+Play with WeMix
+https://search.r-project.org/CRAN/refmans/WeMix/html/mix.html 
+```{r [try] WeMix (works)}
+library(WeMix)
+p.dfweighted$W2 <- 1
+p.dfweighted$W1 <- 1/p.dfweighted$Freq
+# mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W2"))
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=1/p.dfweighted$Freq))$coefficients[,"Estimate"]["intervention"] # 0.7619547 
+
+# It might be this...?
+summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W2", "W1"))) # 0.7796 
+# weight at level 2 cluster rather than level 1 individual (which ends up only weighting the residual)
+tau2_weight <- 0.04089
+tau2_weight
+sigma2_w_weight <- 1.00049
+sigma2_w_weight
+ICC_weight <- tau2_weight/(tau2_weight + sigma2_w_weight)
+ICC_weight
+
+# or it might be this
+summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1"))) # 0.7755     
+# inverse cluster weight at both level 2 cluster and level 1 individual (would that be weighting both sigma2 and tau2 as we want?)
+# tau2_weight <- 0.03171    
+# tau2_weight
+# sigma2_w_weight <- 1.01527    
+# sigma2_w_weight
+# ICC_weight <- tau2_weight/(tau2_weight + sigma2_w_weight)
+ICC_weight_mix <- summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1")))$ICC
+# < SOLVED > 
+sum( filter(p.dfsum, Z==1)$outcome/(filter(p.dfsum, Z==1)$Freq*(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight_mix)) )/sum( 1/(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight_mix) ) -
+  sum( filter(p.dfsum, Z==0)$outcome/(filter(p.dfsum, Z==0)$Freq*(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight_mix)) )/sum( 1/(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight_mix) ) # 0.7755147
+summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1")))$coef # 0.7755     
+
+```
+
+This manual weighting works, and yields the same results as the formula. But strangely, it's not the same as WeMix (which also yields the same results with the formula). I'm guessing they're the same estimators but with different variance terms.
+- This is likely because the outcomes in each cluster end up getting scaled by the cluster sizes, which then affects the estimation of the variance terms.
+- in this sense, I don't think this manual weighting is "correct," WeMix is probably the more accurate estimator with the more accurate ICC estimate.
+```{r [try] P-CRT MEW with manual weighting}
+library(dplyr)
+p.dfweighted <- pb.dfweighted %>% filter(period == 1)
+# create stronger cluster effect
+p.dfweighted$outcome<- p.dfweighted$outcome + sqrt(as.numeric(p.dfweighted$cluster))
+
+# create marginal dataframe
+p.dfsum <- aggregate(outcome ~ cluster + period + Z, data=p.dfweighted, sum)
+p.dfsum <- merge(p.dfsum, unique(select(p.dfweighted,-outcome)), by=c("cluster","period","Z"))
+p.dfsum
+
+# create weighted design matrix
+str(p.dfweighted)
+# alternative weighting
+p.dfweighted$outcome_weighted <- p.dfweighted$outcome/sqrt(p.dfweighted$Freq)
+p.dfweighted$intervention_weighted <- p.dfweighted$intervention/sqrt(p.dfweighted$Freq)
+p.dfweighted$intercept_weighted <- 1/sqrt(p.dfweighted$Freq)
+# p.dfweighted$outcome_weightedv2 <- p.dfweighted$outcome/(p.dfweighted$Freq)
+
+# lm comparison (# same!)
+lm(outcome ~ intervention, data=p.dfweighted, weights = 1/p.dfweighted$Freq)
+lm(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted, data=p.dfweighted)
+
+# lmer with weighted design matrix should be equal to equation 1 in appendix of two weights paper
+# correct weighting
+library(WeMix)
+summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1")))
+# weighting design matrix
+weightedreg <- lme4::lmer(outcome_weighted ~ 0 + intercept_weighted + intervention_weighted + (1|cluster), data=p.dfweighted)
+weightedreg
+
+# pull variance values
+tau2_weight <- as.data.frame(summary(weightedreg)$varcor)$vcov[1]
+tau2_weight
+sigma2_w_weight <- as.data.frame(summary(weightedreg)$varcor)$vcov[2]
+sigma2_w_weight
+ICC_weight <- tau2_weight/(tau2_weight + sigma2_w_weight)
+ICC_weight
+
+# MEW treatment estimate <SAME>
+sum( filter(p.dfsum, Z==1)$outcome/(filter(p.dfsum, Z==1)$Freq*(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight)) )/sum( 1/(1+(filter(p.dfsum, Z==1)$Freq-1)*ICC_weight) ) -
+  sum( filter(p.dfsum, Z==0)$outcome/(filter(p.dfsum, Z==0)$Freq*(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight)) )/sum( 1/(1+(filter(p.dfsum, Z==0)$Freq-1)*ICC_weight) ) # 0.7755147
+summary(weightedreg)$coefficients
+
+# compared to wemix. Is wemix really anny better?
+# estimated variance terms (all pretty different, weighted ones are significantly smaller)
+summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1")))$vars # weighted WeMix
+summary(weightedreg)$varcor # weighted lmer
+summary(lme4::lmer(outcome ~ intervention + (1|cluster), data=p.dfweighted))$varcor # unweighted lmer
+# Comparing ICC (weighted ICC's also differ a fair amount)
+ICC_weight_mix # summary(mix(outcome ~ intervention + (1|cluster), data=p.dfweighted, weights=c("W1", "W1")))$ICC
+ICC_weight
+(0.23503^2)/(1.00524^2 + 0.23503^2)
+ 
+```
+
+# PB-CRT with variable cluster sizes but equal cluster:period sizes
+```{r sim data}
+library(lme4)
+library(dplyr)
+
+I=6 # cluster
+J=2 # 2 periods
+# n=20
+n=100 # average clusterperiod sizes
+
+### Constant Intervention Effect ###
+
+## P-CRT
+set.seed(2525)
+# n_cp <- rpois(I*J, 100) # 2/22/2024 variable cp sizes
+# n_cp <- rep(100, I*J) # equal cluster sizes
+n_cp <- rpois(I, 100) # variable cluster sizes and equal cp sizes
+
+n_cp
+cluster <- c()
+period <- c()
+for(i in 1:(length(n_cp))){
+  cluster <- c(cluster, rep(i, each=n_cp[i]))
+  period <- c(period, rep(0, each=n_cp[i]))
+}
+ind <- 1:length(cluster)
+# for(i in ((length(n_cp)/2)+1):length(n_cp)){
+#     cluster<- c(cluster, rep(i-(length(n_cp)/2), each=n_cp[i]))
+#     period <- c(period, rep(1, each=n_cp[i]))
+# }
+cluster <- c(cluster,cluster)
+period <- c(period, period+1)
+table(cluster, period) # check
+n_cp # check
+
+pb.df2 <- data.frame(
+  cluster = cluster,
+  period = period
+)
+pb.df2 %>% str()
+table(pb.df2$cluster, pb.df2$period)
+pb.df2$intervention <- ifelse(pb.df2$cluster>3 & pb.df2$period==1, 1, 0)
+table(pb.df2[pb.df2$intervention==1,]$cluster, pb.df2[pb.df2$intervention==1,]$period)
+
+# generate a time variable because idk why tbh
+pb.df2$time <- ifelse(pb.df2$period==1,1,0)
+
+# generate some nonsense outcome
+pb.df2$outcome <- rnorm(n=nrow(pb.df2), mean=3, sd=1)
+
+# factor everything
+pb.df2$cluster <- as.factor(pb.df2$cluster)
+pb.df2$time <- as.factor(pb.df2$time)
+# pb.df2$intervention <- as.factor(pb.df2$intervention)
+
+# generate Z variable for sequence
+table(pb.df2$cluster, pb.df2$period)
+table(pb.df2[pb.df2$intervention==1,]$cluster, pb.df2[pb.df2$intervention==1,]$period)
+pb.df2$Z <- ifelse(pb.df2$cluster %in% c(4,5,6), 1, 0)
+# check
+table(pb.df2$cluster, pb.df2$period)
+table(pb.df2$Z, pb.df2$period)
+
+# p.df <- data.frame(
+#   cluster= as.factor(rep(1:I,each=n*J)),
+#   period= as.factor(rep(1:J, n*I)),
+#   intervention= c(rep(0, n*J*(I/2)), rep(1, n*J*(I/2))),
+#   outcome=c(
+#     rnorm(n=n*J*(I/2), mean=3, sd=1), # control
+#     rnorm(n=n*J*(I/2), mean=5, sd=1) # intervention
+#   )
+# )
+# ## Sim PB-CRT
+# pb.df <- p.df
+# pb.df$intervention <- ifelse(pb.df$period==1, 0, pb.df$intervention)
+# pb.df$time <- as.factor(pb.df$time)
+## View
+# str(pb.df)
+# table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$period)
+# table(pb.df[pb.df$intervention==1,]$cluster, pb.df[pb.df$intervention==1,]$time)
+```
+
+```{r EME point estimate}
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[1]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[2]
+sigma2_w
+# sigma2 <- sigma2_w/n
+# sigma2 <- sigma2_w/mean(table(pb.df2$cluster, pb.df2$period))
+
+# from FE estimator
+weighttrt*( sum(filter(test, Z==1, period==1)$outcome.weighted) - sum(filter(test, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(test, Z==0, period==1)$outcome.weighted) - sum(filter(test, Z==0, period==0)$outcome.weighted) )
+# with corresponding ME term
+weighttrt*( sum(filter(test, Z==1, period==1)$outcome.weighted) - (tau2/(sigma2+tau2))*sum(filter(test, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(test, Z==0, period==1)$outcome.weighted) - (tau2/(sigma2+tau2))*sum(filter(test, Z==0, period==0)$outcome.weighted) )
+
+# ugh crap it's not the same... does it not extend...
+# it's probably because sigma2_w/n is not correct with variable cluster sizes...
+
+(tau2/(sigma2+tau2))
+(tau2/(sigma2_w+tau2))
+
+# Guess attempts to extend
+test <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(test) <- c("cluster", "period", "Freq")
+test <- merge(
+  merge(test, 
+        aggregate(outcome ~ cluster + period, data=pb.df2, sum),
+        by = c("cluster", "period")
+  ),
+  aggregate(Z ~ cluster + period, data=pb.df2, mean),
+  by = c("cluster", "period")
+)
+test
+test <- merge(
+  test,
+  aggregate(Freq ~ cluster, data=test, sum),
+  by = c("cluster")
+)
+test
+colnames(test) <- c("cluster", "period", "Freq", "outcome", "Z", "Freq.cluster")
+test
+test <- merge(
+  test,
+  select(test, c("cluster", "period", "Freq")) %>% mutate(period=(as.numeric(period)-2)*-1) %>% rename(Freq.opp = Freq),
+  by = c("cluster", "period")
+)
+test$weight <- test$Freq.opp/test$Freq.cluster
+test
+test$outcome.weighted <- test$outcome * test$weight
+test
+MEtest <- test
+MEtest
+# MEtest$ICC2 <- (tau2/(sigma2_w/((MEtest$Freq + MEtest$Freq.opp)/2)+tau2))
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==1, period==0)$ICC2 * filter(MEtest, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==0)$ICC2 * filter(MEtest, Z==0, period==0)$outcome.weighted) )
+# # nope, I'm just guessing here...
+# MEtest$ICC <- (tau2/(sigma2_w+tau2))
+# # MEtest$ICC.weight <- 1/(1+(MEtest$Freq+MEtest$Freq.opp-1)*MEtest$ICC)
+# MEtest$ICC.weight <- 1/(1+(MEtest$Freq-1)*MEtest$ICC)
+# MEtest
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted/filter(MEtest, Z==1, period==1)$ICC.weight) - sum(filter(MEtest, Z==1, period==0)$outcome.weighted/filter(MEtest, Z==1, period==0)$ICC.weight) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted/filter(MEtest, Z==0, period==1)$ICC.weight) - sum(filter(MEtest, Z==0, period==0)$outcome.weighted/filter(MEtest, Z==0, period==0)$ICC.weight) )
+# # nope, this guess doesn't work either
+
+# (2/1/2024) attempt to test equation
+MEtest$Ki1 <- ifelse(MEtest$period==0, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ki2 <- ifelse(MEtest$period==1, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ai <- MEtest$Ki2*(1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ci <- MEtest$Ki1*(1/sigma2_w)*(sigma2_w+MEtest$Ki2*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Di1 <- MEtest$Ci/MEtest$Ki1  # that mess about Di + (Ki1-1)Fi
+MEtest$Di2 <- MEtest$Ai/MEtest$Ki2 # that mess about Di + (Ki2-1)Fi
+MEtest$Fi <- MEtest$Bi/(MEtest$Ki1*MEtest$Ki2)
+MEtest
+
+MEtestnumerator <- (
+  sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==1,period==0)$Bi)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest,Z==0,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)+sum(filter(MEtest,Z==0,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Ai)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest,period==0)$Di1
+      filter(MEtest,period==0)$Ci
+      *(1/filter(MEtest,period==0)$Freq)
+      *filter(MEtest,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Ki1
+      # *filter(MEtest,Z==1,period==1)$Fi
+      filter(MEtest,Z==1,period==1)$Bi
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Ki1
+      # *filter(MEtest,Z==0,period==1)$Fi
+      filter(MEtest,Z==0,period==1)$Bi
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+)
+MEtestdenominator <- (
+  sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,period==1)$Ci)
+  -sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Bi)*sum(filter(MEtest,Z==0,period==1)$Bi)
+  -sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,Z==1,period==1)$Bi)*sum(filter(MEtest,Z==1,period==1)$Bi)
+)
+MEtestnumerator
+MEtestdenominator # also the determinant, CONFIRM CORRECT BASED ON VARIANCE ESTIMATOR
+
+# [CORRECT] Point Estimator is then:
+MEtestnumerator/MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+# [CORRECT] Variance Estimator is then:
+(sum(filter(MEtest,period==1)$Ci)*sum(filter(MEtest,period==1)$Ai)-sum(filter(MEtest,period==1)$Bi)*sum(filter(MEtest,period==1)$Bi)) / MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Std. Error"]["intervention"] )^2
+
+table(pb.df2$cluster, pb.df2$period)
+```
+
+```{r EMEw point estimate}
+pb.df2 %>% str()
+clusterperiodsize <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(clusterperiodsize) <- c("cluster", "period", "Freq")
+clusterperiodsize
+pb.df2weighted <- merge(pb.df2, clusterperiodsize, by=c("cluster","period"))
+pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+
+library(WeMix)
+summary(mix(outcome ~ intervention + time + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1")))
+ # Level    Group        Name Variance Std. Error Std.Dev.
+ #     2  cluster (Intercept) 0.001631   0.003305  0.04039
+ #     1 Residual             0.946536   0.033102  0.97290
+
+# tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[1]
+# tau2 <- 0.001631
+tau2 <- mix(outcome ~ intervention + time + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))$vars[1]
+tau2
+# sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster), data = pb.df2))$varcor)$vcov[2]
+# sigma2_w <- 0.946536
+sigma2_w <- mix(outcome ~ intervention + time + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))$vars[2]
+sigma2_w
+# sigma2 <- sigma2_w/n
+# sigma2 <- sigma2_w/mean(table(pb.df2$cluster, pb.df2$period))
+
+(tau2/(sigma2+tau2))
+(tau2/(sigma2_w+tau2))
+
+# Guess attempts to extend
+test <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(test) <- c("cluster", "period", "Freq")
+test <- merge(
+  merge(test, 
+        aggregate(outcome ~ cluster + period, data=pb.df2, sum),
+        by = c("cluster", "period")
+  ),
+  aggregate(Z ~ cluster + period, data=pb.df2, mean),
+  by = c("cluster", "period")
+)
+test
+test <- merge(
+  test,
+  aggregate(Freq ~ cluster, data=test, sum),
+  by = c("cluster")
+)
+test
+colnames(test) <- c("cluster", "period", "Freq", "outcome", "Z", "Freq.cluster")
+test
+test <- merge(
+  test,
+  select(test, c("cluster", "period", "Freq")) %>% mutate(period=(as.numeric(period)-2)*-1) %>% rename(Freq.opp = Freq),
+  by = c("cluster", "period")
+)
+test$weight <- test$Freq.opp/test$Freq.cluster
+test
+test$outcome.weighted <- test$outcome * test$weight
+test
+MEtest <- test
+MEtest
+# MEtest$ICC2 <- (tau2/(sigma2_w/((MEtest$Freq + MEtest$Freq.opp)/2)+tau2))
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==1, period==0)$ICC2 * filter(MEtest, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==0)$ICC2 * filter(MEtest, Z==0, period==0)$outcome.weighted) )
+# # nope, I'm just guessing here...
+# MEtest$ICC <- (tau2/(sigma2_w+tau2))
+# # MEtest$ICC.weight <- 1/(1+(MEtest$Freq+MEtest$Freq.opp-1)*MEtest$ICC)
+# MEtest$ICC.weight <- 1/(1+(MEtest$Freq-1)*MEtest$ICC)
+# MEtest
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted/filter(MEtest, Z==1, period==1)$ICC.weight) - sum(filter(MEtest, Z==1, period==0)$outcome.weighted/filter(MEtest, Z==1, period==0)$ICC.weight) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted/filter(MEtest, Z==0, period==1)$ICC.weight) - sum(filter(MEtest, Z==0, period==0)$outcome.weighted/filter(MEtest, Z==0, period==0)$ICC.weight) )
+# # nope, this guess doesn't work either
+
+# (2/1/2024) attempt to test equation
+MEtest$Ki1 <- ifelse(MEtest$period==0, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ki2 <- ifelse(MEtest$period==1, MEtest$Freq, MEtest$Freq.opp)
+# MEtest$Ai <- MEtest$Ki2*(1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ai <- (1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+# MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+# MEtest$Bi <- -MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Bi <- -MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ci <- MEtest$Ki1*(1/sigma2_w)*(sigma2_w+MEtest$Ki2*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Di1 <- MEtest$Ci/MEtest$Ki1  # that mess about Di + (Ki1-1)Fi
+MEtest$Di2 <- MEtest$Ai/MEtest$Ki2 # that mess about Di + (Ki2-1)Fi
+MEtest$Fi <- MEtest$Bi/(MEtest$Ki1*MEtest$Ki2)
+MEtest
+
+MEtestnumerator <- (
+  sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==1,period==0)$Bi)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest,Z==0,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)+sum(filter(MEtest,Z==0,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Ai)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest,period==0)$Di1
+      filter(MEtest,period==0)$Ci
+      *(1/filter(MEtest,period==0)$Freq)
+      *filter(MEtest,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Ki1
+      # *filter(MEtest,Z==1,period==1)$Fi
+      filter(MEtest,Z==1,period==1)$Bi
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Ki1
+      # *filter(MEtest,Z==0,period==1)$Fi
+      filter(MEtest,Z==0,period==1)$Bi
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+)
+MEtestdenominator <- (
+  sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,period==1)$Ci)
+  -sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Bi)*sum(filter(MEtest,Z==0,period==1)$Bi)
+  -sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,Z==1,period==1)$Bi)*sum(filter(MEtest,Z==1,period==1)$Bi)
+)
+MEtestnumerator
+MEtestdenominator # also the determinant, CONFIRM CORRECT BASED ON VARIANCE ESTIMATOR
+
+# [CORRECT] Weighted Point Estimator is then:
+MEtestnumerator/MEtestdenominator
+summary(mix(outcome ~ intervention + time + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1")))$coef[,"Estimate"]["intervention"]
+
+# unweighted
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )^2
+
+
+# [INCORRECT] Weighted Variance Estimator is then:
+(sum(filter(MEtest,period==1)$Ci)*sum(filter(MEtest,period==1)$Ai)-sum(filter(MEtest,period==1)$Bi)*sum(filter(MEtest,period==1)$Bi)) / MEtestdenominator
+(summary(mix(outcome ~ intervention + time + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1")))$coef[,"Std. Error"]["intervention"])^2
+
+# unweighted
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = pb.df2))$coefficients[,"Std. Error"]["intervention"] )^2
+
+table(pb.df2$cluster, pb.df2$period)
+```
+
+```{r NEME point estimate}
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+gamma2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data = pb.df2))$varcor)$vcov[1]
+gamma2
+tau2 <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data = pb.df2))$varcor)$vcov[2]
+tau2
+sigma2_w <- as.data.frame(summary(lme4::lmer(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data = pb.df2))$varcor)$vcov[3]
+sigma2_w
+# sigma2 <- sigma2_w/n
+# sigma2 <- sigma2_w/mean(table(pb.df2$cluster, pb.df2$period))
+
+# Guess attempts to extend
+test <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(test) <- c("cluster", "period", "Freq")
+test <- merge(
+  merge(test, 
+        aggregate(outcome ~ cluster + period, data=pb.df2, sum),
+        by = c("cluster", "period")
+  ),
+  aggregate(Z ~ cluster + period, data=pb.df2, mean),
+  by = c("cluster", "period")
+)
+test
+test <- merge(
+  test,
+  aggregate(Freq ~ cluster, data=test, sum),
+  by = c("cluster")
+)
+test
+colnames(test) <- c("cluster", "period", "Freq", "outcome", "Z", "Freq.cluster")
+test
+test <- merge(
+  test,
+  select(test, c("cluster", "period", "Freq")) %>% mutate(period=(as.numeric(period)-2)*-1) %>% rename(Freq.opp = Freq),
+  by = c("cluster", "period")
+)
+test$weight <- test$Freq.opp/test$Freq.cluster
+test
+test$outcome.weighted <- test$outcome * test$weight
+test
+MEtest <- test
+MEtest
+# MEtest$ICC2 <- (tau2/(sigma2_w/((MEtest$Freq + MEtest$Freq.opp)/2)+tau2))
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==1, period==0)$ICC2 * filter(MEtest, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==0)$ICC2 * filter(MEtest, Z==0, period==0)$outcome.weighted) )
+# # nope, I'm just guessing here...
+# MEtest$ICC <- (tau2/(sigma2_w+tau2))
+# # MEtest$ICC.weight <- 1/(1+(MEtest$Freq+MEtest$Freq.opp-1)*MEtest$ICC)
+# MEtest$ICC.weight <- 1/(1+(MEtest$Freq-1)*MEtest$ICC)
+# MEtest
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted/filter(MEtest, Z==1, period==1)$ICC.weight) - sum(filter(MEtest, Z==1, period==0)$outcome.weighted/filter(MEtest, Z==1, period==0)$ICC.weight) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted/filter(MEtest, Z==0, period==1)$ICC.weight) - sum(filter(MEtest, Z==0, period==0)$outcome.weighted/filter(MEtest, Z==0, period==0)$ICC.weight) )
+# # nope, this guess doesn't work either
+
+# (2/1/2024) attempt to test equation
+MEtest$Ki1 <- ifelse(MEtest$period==0, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ki2 <- ifelse(MEtest$period==1, MEtest$Freq, MEtest$Freq.opp)
+# MEtest$Ai <- MEtest$Ki2*(1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ai <- MEtest$Ki2*(1 / (sigma2_w+MEtest$Ki2*(tau2+gamma2-(MEtest$Ki2*tau2^2)/(sigma2_w+MEtest$Ki2*(tau2+gamma2)))) )
+# MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(tau2)/(sigma2_w+(MEtest$Ki2*(tau2+gamma2))) * (1 / (sigma2_w+MEtest$Ki2*(tau2+gamma2-(MEtest$Ki2*tau2^2)/(sigma2_w+MEtest$Ki2*(tau2+gamma2)))) )
+# MEtest$Ci <- MEtest$Ki1*(1/sigma2_w)*(sigma2_w+MEtest$Ki2*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ci <- MEtest$Ai
+MEtest$Di1 <- MEtest$Ci/MEtest$Ki1  # that mess about Di + (Ki1-1)Fi
+MEtest$Di2 <- MEtest$Ai/MEtest$Ki2 # that mess about Di + (Ki2-1)Fi
+MEtest$Fi <- MEtest$Bi/(MEtest$Ki1*MEtest$Ki2)
+MEtest
+
+MEtestnumerator <- (
+  sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==1,period==0)$Bi)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest,Z==0,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)+sum(filter(MEtest,Z==0,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Ai)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest,period==0)$Di1
+      filter(MEtest,period==0)$Ci
+      *(1/filter(MEtest,period==0)$Freq)
+      *filter(MEtest,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Ki1
+      # *filter(MEtest,Z==1,period==1)$Fi
+      filter(MEtest,Z==1,period==1)$Bi
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Ki1
+      # *filter(MEtest,Z==0,period==1)$Fi
+      filter(MEtest,Z==0,period==1)$Bi
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+)
+MEtestdenominator <- (
+  sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,period==1)$Ci)
+  -sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Bi)*sum(filter(MEtest,Z==0,period==1)$Bi)
+  -sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,Z==1,period==1)$Bi)*sum(filter(MEtest,Z==1,period==1)$Bi)
+)
+MEtestnumerator
+MEtestdenominator # also the determinant, CONFIRM CORRECT BASED ON VARIANCE ESTIMATOR
+
+# [CORRECT] Point Estimator is then:
+MEtestnumerator/MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+# [CORRECT] Variance Estimator is then:
+(sum(filter(MEtest,period==1)$Ci)*sum(filter(MEtest,period==1)$Ai)-sum(filter(MEtest,period==1)$Bi)*sum(filter(MEtest,period==1)$Bi)) / MEtestdenominator
+(summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Std. Error"]["intervention"] )^2
+
+table(pb.df2$cluster, pb.df2$period)
+```
+
+```{r NEMEw point estimate}
+# (summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+library(WeMix)
+summary(mix(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1")))
+# Variance terms:
+#  Level          Group        Name  Variance Std. Error  Std.Dev.
+#      3        cluster (Intercept) 1.631e-03  3.305e-03 4.039e-02
+#      2 cluster:period (Intercept) 5.890e-18  1.759e-16 2.427e-09
+#      1       Residual             9.465e-01  3.105e-02 9.729e-01
+
+gamma2 <- 0
+gamma2
+tau2 <- 0.001631
+tau2
+sigma2_w <- 0.9465
+sigma2_w
+# sigma2 <- sigma2_w/n
+# sigma2 <- sigma2_w/mean(table(pb.df2$cluster, pb.df2$period))
+
+# Guess attempts to extend
+test <- as.data.frame(table(pb.df2$cluster, pb.df2$period))
+colnames(test) <- c("cluster", "period", "Freq")
+test <- merge(
+  merge(test, 
+        aggregate(outcome ~ cluster + period, data=pb.df2, sum),
+        by = c("cluster", "period")
+  ),
+  aggregate(Z ~ cluster + period, data=pb.df2, mean),
+  by = c("cluster", "period")
+)
+test
+test <- merge(
+  test,
+  aggregate(Freq ~ cluster, data=test, sum),
+  by = c("cluster")
+)
+test
+colnames(test) <- c("cluster", "period", "Freq", "outcome", "Z", "Freq.cluster")
+test
+test <- merge(
+  test,
+  select(test, c("cluster", "period", "Freq")) %>% mutate(period=(as.numeric(period)-2)*-1) %>% rename(Freq.opp = Freq),
+  by = c("cluster", "period")
+)
+test$weight <- test$Freq.opp/test$Freq.cluster
+test
+test$outcome.weighted <- test$outcome * test$weight
+test
+MEtest <- test
+MEtest
+# MEtest$ICC2 <- (tau2/(sigma2_w/((MEtest$Freq + MEtest$Freq.opp)/2)+tau2))
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted) - sum(filter(MEtest, Z==1, period==0)$ICC2 * filter(MEtest, Z==1, period==0)$outcome.weighted) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted) - sum(filter(MEtest, Z==0, period==0)$ICC2 * filter(MEtest, Z==0, period==0)$outcome.weighted) )
+# # nope, I'm just guessing here...
+# MEtest$ICC <- (tau2/(sigma2_w+tau2))
+# # MEtest$ICC.weight <- 1/(1+(MEtest$Freq+MEtest$Freq.opp-1)*MEtest$ICC)
+# MEtest$ICC.weight <- 1/(1+(MEtest$Freq-1)*MEtest$ICC)
+# MEtest
+# weighttrt*( sum(filter(MEtest, Z==1, period==1)$outcome.weighted/filter(MEtest, Z==1, period==1)$ICC.weight) - sum(filter(MEtest, Z==1, period==0)$outcome.weighted/filter(MEtest, Z==1, period==0)$ICC.weight) ) - weightctrl*( sum(filter(MEtest, Z==0, period==1)$outcome.weighted/filter(MEtest, Z==0, period==1)$ICC.weight) - sum(filter(MEtest, Z==0, period==0)$outcome.weighted/filter(MEtest, Z==0, period==0)$ICC.weight) )
+# # nope, this guess doesn't work either
+
+# (2/1/2024) attempt to test equation
+MEtest$Ki1 <- ifelse(MEtest$period==0, MEtest$Freq, MEtest$Freq.opp)
+MEtest$Ki2 <- ifelse(MEtest$period==1, MEtest$Freq, MEtest$Freq.opp)
+# MEtest$Ai <- MEtest$Ki2*(1/sigma2_w)*(sigma2_w+MEtest$Ki1*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ai <- (1 / (sigma2_w+MEtest$Ki2*(tau2+gamma2-(MEtest$Ki2*tau2^2)/(sigma2_w+MEtest$Ki2*(tau2+gamma2)))) )
+# MEtest$Bi <- -MEtest$Ki1*MEtest$Ki2*(1/sigma2_w)*(tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Bi <- -MEtest$Ki2*(tau2)/(sigma2_w+(MEtest$Ki2*(tau2+gamma2))) * (1 / (sigma2_w+MEtest$Ki2*(tau2+gamma2-(MEtest$Ki2*tau2^2)/(sigma2_w+MEtest$Ki2*(tau2+gamma2)))) )
+# MEtest$Ci <- MEtest$Ki1*(1/sigma2_w)*(sigma2_w+MEtest$Ki2*tau2)/(sigma2_w+MEtest$Freq.cluster*tau2)
+MEtest$Ci <- MEtest$Ai
+MEtest$Di1 <- MEtest$Ci/MEtest$Ki1  # that mess about Di + (Ki1-1)Fi
+MEtest$Di2 <- MEtest$Ai/MEtest$Ki2 # that mess about Di + (Ki2-1)Fi
+MEtest$Fi <- MEtest$Bi/(MEtest$Ki1*MEtest$Ki2)
+MEtest
+
+MEtestnumerator <- (
+  sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    ) 
+    -sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+    -sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  +(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==1,period==0)$Bi)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==0,period==0)$Ki2
+      # *filter(MEtest,Z==0,period==0)$Fi
+      filter(MEtest,Z==0,period==0)$Bi
+      *(1/filter(MEtest,Z==0,period==0)$Freq)
+      *filter(MEtest,Z==0,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Di2
+      filter(MEtest,Z==0,period==1)$Ai
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+  +(-sum(filter(MEtest,Z==0,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Bi)+sum(filter(MEtest,Z==0,period==0)$Ai)*sum(filter(MEtest,period==0)$Ci))*(
+    sum(
+      # filter(MEtest,Z==1,period==0)$Ki2
+      # *filter(MEtest,Z==1,period==0)$Fi
+      filter(MEtest,Z==1,period==0)$Bi
+      *(1/filter(MEtest,Z==1,period==0)$Freq)
+      *filter(MEtest,Z==1,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Di2
+      filter(MEtest,Z==1,period==1)$Ai
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+  )
+  -(sum(filter(MEtest,Z==1,period==0)$Bi)*sum(filter(MEtest,Z==0,period==0)$Ai)-sum(filter(MEtest,Z==1,period==0)$Ai)*sum(filter(MEtest,Z==0,period==0)$Bi))*(
+    sum(
+      # filter(MEtest,period==0)$Di1
+      filter(MEtest,period==0)$Ci
+      *(1/filter(MEtest,period==0)$Freq)
+      *filter(MEtest,period==0)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==1,period==1)$Ki1
+      # *filter(MEtest,Z==1,period==1)$Fi
+      filter(MEtest,Z==1,period==1)$Bi
+      *(1/filter(MEtest,Z==1,period==1)$Freq)
+      *filter(MEtest,Z==1,period==1)$outcome
+    )
+    +sum(
+      # filter(MEtest,Z==0,period==1)$Ki1
+      # *filter(MEtest,Z==0,period==1)$Fi
+      filter(MEtest,Z==0,period==1)$Bi
+      *(1/filter(MEtest,Z==0,period==1)$Freq)
+      *filter(MEtest,Z==0,period==1)$outcome
+    )
+  )
+)
+MEtestdenominator <- (
+  sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,period==1)$Ci)
+  -sum(filter(MEtest,Z==1,period==1)$Ai)*sum(filter(MEtest,Z==0,period==1)$Bi)*sum(filter(MEtest,Z==0,period==1)$Bi)
+  -sum(filter(MEtest,Z==0,period==1)$Ai)*sum(filter(MEtest,Z==1,period==1)$Bi)*sum(filter(MEtest,Z==1,period==1)$Bi)
+)
+MEtestnumerator
+MEtestdenominator # also the determinant, CONFIRM CORRECT BASED ON VARIANCE ESTIMATOR
+
+# [CORRECT] Point Estimator is then:
+MEtestnumerator/MEtestdenominator
+summary(mix(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1")))$coef[,"Estimate"]["intervention"]
+
+# (summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Estimate"]["intervention"] )
+
+# [INCORRECT] Variance Estimator is then:
+(sum(filter(MEtest,period==1)$Ci)*sum(filter(MEtest,period==1)$Ai)-sum(filter(MEtest,period==1)$Bi)*sum(filter(MEtest,period==1)$Bi)) / MEtestdenominator
+summary(mix(outcome ~ intervention + time + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1")))$coef[,"Std. Error"]["intervention"]
+
+# (summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster) + (1|cluster:period), data = pb.df2))$coefficients[,"Std. Error"]["intervention"] )^2
+
+table(pb.df2$cluster, pb.df2$period)
+```
+
+```{r ANCOVA w/ baseline vs LM}
+# https://library.virginia.edu/data/articles/getting-started-with-analysis-of-covariance#:~:text=The%20Analysis%20of%20Covariance%2C%20or,measure%20of%20that%20same%20response.
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+# run the pb.df2 generation code from the simulation .rmd
+pb.df2 %>% str()
+pb.df2$avgoutcomes %>% head()
+table(pb.df2$period==0, pb.df2$avgoutcomes)
+
+# isolate avg outcomes from baseline period
+select(filter(pb.df2, period==0),c(cluster, avgoutcomes0 = avgoutcomes)) %>% head()
+pb.df2_ANCOVA <- merge(pb.df2, select(filter(pb.df2, period==0),c(cluster, avgoutcomes0 = avgoutcomes)), by=c("cluster"))
+pb.df2_ANCOVA %>% str()
+pb.df2_ANCOVA$W1 <- 1/pb.df2_ANCOVA$Freq
+
+# ANCOVA vs LMER
+ANCOVA_cpb <- lme4::lmer(outcome ~ avgoutcomes0 + z + (1|cluster), data=filter(pb.df2_ANCOVA, period==1))
+# I think it's this, basically
+ANCOVA_cpb
+anova(ANCOVA_cpb)
+
+# weighted ANOVA_cpb
+mix(outcome ~ avgoutcomes0 + z + (1|cluster), data=filter(pb.df2_ANCOVA, period==1), weights=c("W1", "W1"))
+
+# cluster:period means ANOVA_cpb
+
+
+# these are all different
+lme4::lmer(outcome ~ z  + period + (1|cluster), data=pb.df2_ANCOVA)
+lme4::lmer(outcome ~ z  + period + (1|cluster) + (1|cluster:period), data=pb.df2_ANCOVA)
+lm(outcome ~ z  + period + cluster, data=pb.df2_ANCOVA)
+
+summary(mix(outcome ~ z  + period + (1|cluster), data=pb.df2_ANCOVA, weights=c("W1", "W1")))
+
+
+```
+
+Case study test
+```{r * Haines import & EDA}
+library(dplyr)
+library(readxl)
+
+# import population level data
+Haines <- read_xlsx("C:/Users/kenny/OneDrive/Professional/#Education/Duke-NUS PhD/Thesis/Notes TOI/R/Case Study Data/Haines et al/pmed.1002412.s002.xlsx")
+
+str(Haines)
+
+# outcome
+Haines$los %>% log %>% hist()
+Haines$acute_los %>% log %>% hist()
+plot(Haines$los, Haines$acute_los)
+Haines$value <- log(Haines$acute_los)
+# period
+Haines$sw_step %>% table()
+Haines$period <- Haines$sw_step
+# intervention
+Haines$old_we_exposure %>% table()
+Haines$no_we_exposure %>% table()
+Haines$new_we_exposure %>% table()
+# study
+Haines$study1 %>% table()
+Haines$study2 %>% table()
+# hospital
+Haines$hospital %>% table()
+Haines$site %>% table()
+# ward
+Haines$index_ward %>% table()
+Haines$cluster <- Haines$index_ward
+```
+
+```{r * Haines data prep}
+# Haines outcome of interest
+hist(Haines$value)
+hist(log(Haines$acute_los))
+
+# set up ETI's for Haines data
+## Subset Haines
+Haines1 <- Haines %>% filter(study1==1)
+Haines1$tx.var <- Haines1$no_we_exposure
+table(Haines1$cluster, Haines1$period) %>% mean()
+## TOI sequence
+TOIseq <- as.data.frame(t(matrix(c(1:6))))
+colnames(TOIseq) <- paste0("TOI",1:6)
+TOIseq
+
+## cluster sizes of exposed cluster:periods
+temp <- table(Haines1[Haines1$tx.var==1,]$cluster, Haines1[Haines1$tx.var==1,]$period) %>% as.data.frame()
+temp
+# dummy variable for exposure periods
+temp$Freq <- ifelse(temp$Freq > 0, 1, 0)
+temp
+temp <- temp %>%
+  dplyr::rename(
+    cluster = Var1,
+    period = Var2
+  )
+temp <- temp[order(temp$cluster),]
+temp2 <- as.data.frame(table(temp$cluster, temp$Freq))
+colnames(temp2) <- c("cluster", "Var2" ,"nbaseline")
+temp2 <- temp2 %>% filter(Var2 == 0) %>% dplyr::select(-Var2)
+temp
+temp2
+temp_merge <- merge(temp, temp2, by="cluster")
+temp_merge$period <- as.numeric(as.character(temp_merge$period))
+temp_merge$TOI <- temp_merge$period - temp_merge$nbaseline - temp_merge$Freq
+temp_merge <- temp_merge %>% filter(Freq != 0)
+temp_merge
+
+# merge in cumulative frequency
+Haines1_new <- merge(Haines1, temp_merge %>% dplyr::select(cluster, period, TOI), by=c("cluster","period"), all.x=T)
+Haines1_new$TOI <- ifelse(is.na(Haines1_new$TOI), 0, Haines1_new$TOI)
+Haines1_new$TOI <- as.factor(Haines1_new$TOI)
+Haines1_new$period <- as.factor(Haines1_new$period)
+Haines1_new$cluster <- as.factor(Haines1_new$cluster)
+
+# check
+table(Haines1_new$TOI, Haines1_new$tx.var)
+table(Haines1_new[Haines1_new$tx.var==1,]$cluster, Haines1_new[Haines1_new$tx.var==1,]$period)
+
+# reorder clusters
+table(Haines1_new[Haines1_new$tx.var==1,]$cluster, Haines1_new[Haines1_new$tx.var==1,]$period)
+Haines1_new$cluster_new <- 0
+Haines1_new$cluster_new[Haines1_new$cluster == 5] <- 1.5
+Haines1_new$cluster_new[Haines1_new$cluster == 11] <- 1.11
+Haines1_new$cluster_new[Haines1_new$cluster == 1] <- 2.1
+Haines1_new$cluster_new[Haines1_new$cluster == 12] <- 2.12
+Haines1_new$cluster_new[Haines1_new$cluster == 6] <- 3.6
+Haines1_new$cluster_new[Haines1_new$cluster == 13] <- 3.13
+Haines1_new$cluster_new[Haines1_new$cluster == 2] <- 4.2
+Haines1_new$cluster_new[Haines1_new$cluster == 14] <- 4.14
+Haines1_new$cluster_new[Haines1_new$cluster == 4] <- 5.4
+Haines1_new$cluster_new[Haines1_new$cluster == 15] <- 5.15
+Haines1_new$cluster_new[Haines1_new$cluster == 3] <- 6.3
+Haines1_new$cluster_new[Haines1_new$cluster == 16] <- 6.16
+Haines1_new$cluster_new <- factor(Haines1_new$cluster_new)
+
+# Check
+# constant intervention effects
+table(Haines1_new[Haines1_new$tx.var==1,]$cluster_new, Haines1_new[Haines1_new$tx.var==1,]$period)
+# TOI results
+table(Haines1_new[Haines1_new$TOI==1,]$cluster_new, Haines1_new[Haines1_new$TOI==1,]$period)
+table(Haines1_new[Haines1_new$TOI==2,]$cluster_new, Haines1_new[Haines1_new$TOI==2,]$period)
+table(Haines1_new[Haines1_new$TOI==3,]$cluster_new, Haines1_new[Haines1_new$TOI==3,]$period)
+table(Haines1_new[Haines1_new$TOI==4,]$cluster_new, Haines1_new[Haines1_new$TOI==4,]$period)
+table(Haines1_new[Haines1_new$TOI==5,]$cluster_new, Haines1_new[Haines1_new$TOI==5,]$period)
+table(Haines1_new[Haines1_new$TOI==6,]$cluster_new, Haines1_new[Haines1_new$TOI==6,]$period)
+
+table(Haines1_new$cluster, Haines1_new$period)
+Haines1_new$cluster %>% table()
+Haines1_new$period %>% table()
+
+# average cluster size
+round(table(Haines1_new$cluster)/7)
+```
+
+```{r * Haines PB-CRT analysis}
+table(Haines1_new[Haines1_new$tx.var==1,]$cluster_new, Haines1_new[Haines1_new$tx.var==1,]$period)
+
+Haines_pb.df <- Haines1_new %>% filter(period %in% c(1, 4))
+Haines_pb.df$period <- factor(Haines_pb.df$period)
+table(Haines_pb.df[Haines_pb.df$tx.var==1,]$cluster_new, Haines_pb.df[Haines_pb.df$tx.var==1,]$period)
+table(Haines_pb.df$cluster_new, Haines_pb.df$period)
+
+# get cluster means & use that as the weight...
+cellmeansize <- as.data.frame(rowMeans(table(Haines_pb.df$cluster_new, Haines_pb.df$period)))
+colnames(cellmeansize) <- "mean_Freq"
+cellmeansize$cluster_new <- rownames(cellmeansize)
+cellmeansize
+
+# get cluster:period size
+cellsize <- as.data.frame(table(Haines_pb.df$cluster_new, Haines_pb.df$period))
+colnames(cellsize) <- c("cluster_new", "period", "Freq")
+cellsize
+
+# merge both into Haines_pb.df
+Haines_pb.df <- merge(Haines_pb.df, cellmeansize, by="cluster_new")
+Haines_pb.df <- merge(Haines_pb.df, cellsize, by=c("cluster_new","period"))
+
+Haines_pb.df$W1 <- 1/Haines_pb.df$Freq
+
+Haines_pb.df$mean_W1 <- 1/Haines_pb.df$mean_Freq
+```
+
+```{r * Haines weighted analyiss}
+# analysis with IEEw and FEw
+# IEEw <- lm(outcome ~ intervention + period-1, data = pb.df2weighted, weights = pb.df2weighted$W1)
+# summary(IEEw)$coef[,"Estimate"]["intervention"]
+# summary(IEEw)$coef[,"Std. Error"]["intervention"]^2
+# clubSandwich::vcovCR(IEEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
+
+# FEw <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+# summary(FEw)$coef[,"Estimate"]["intervention"]
+# summary(FEw)$coef[,"Std. Error"]["intervention"]^2
+# clubSandwich::vcovCR(FEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"]
+
+# analysis with MEw's
+# EMEw <- mix(outcome ~ intervention + period-1 + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+# summary(EMEw)$coef[,"Estimate"]["intervention"]
+# summary(EMEw)$coef[,"Std. Error"]["intervention"]^2
+
+# NEMEw <- mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+# summary(NEMEw)$coef[,"Estimate"]["intervention"]
+# summary(NEMEw)$coef[,"Std. Error"]["intervention"]^2
+
+# IEEw
+lm(value ~ tx.var + period-1, data = Haines_pb.df, weights = 1/Haines_pb.df$Freq) # 0.2152   
+lm(value ~ tx.var + period-1, data = Haines_pb.df, weights = 1/Haines_pb.df$mean_Freq) # 0.2454   
+
+# FEw
+lm(value ~ tx.var + period-1 + cluster_new, data = Haines_pb.df, weights = 1/Haines_pb.df$Freq) # 0.11576
+lm(value ~ tx.var + period-1 + cluster_new, data = Haines_pb.df, weights = 1/Haines_pb.df$mean_Freq) # 0.11472
+
+# these are supposed to both be unbiased for CATE, but they differ by quite a bit...
+
+# EMEw
+WeMix::mix(value ~ tx.var + period-1 + (1|cluster_new), data=Haines_pb.df, weights=c("mean_W1", "mean_W1")) # 0.1241891 
+
+# this is a bit more similar to FEw
+
+# NEMEw
+WeMix::mix(value ~ tx.var + period-1 + (1|cluster_new) + (1|cluster_new:period), data=Haines_pb.df, weights=c("mean_W1", "mean_W1", "mean_W1")) # 0.1241891  
+# it's exactly the same as EMEw?? How can this be??
+
+# check cluster:period RE term
+WeMix::mix(value ~ tx.var + period-1 + (1|cluster_new) + (1|cluster_new:period), data=Haines_pb.df, weights=c("mean_W1", "mean_W1", "mean_W1")) %>% summary() # nearly 0
+
+# ME's without weights
+lme4::lmer(value ~ tx.var + period-1 + (1|cluster_new), data=Haines_pb.df)
+lme4::lmer(value ~ tx.var + period-1 + (1|cluster_new) + (1|cluster_new:period), data=Haines_pb.df)
+# singular boundary fit for cluster:period interaction term.
+```
+Haines NEX generates 0 cluster:period interaction, producing identical estimates to EME
+
+
+```{r * Jiah trial}
+# https://www.sciencedirect.com/science/article/pii/S2352827322003093#da0010
+
+# import cleaned up jiah dataset (cleaned by running the accompanying do file in Stata and exporting the data as .csv)
+jiah <- read.csv("jiah_trial_dataset_cleaned.csv")
+
+# big ass dataset
+
+# identify
+# cluster
+jiah$idclus %>% table()
+
+# period
+jiah$baseline %>% table()
+jiah$endline %>% table()
+
+# cluster period
+table(jiah$idclus, jiah$endline)
+
+# treatment
+jiah$treatment %>% table()
+jiah$treatment <- factor(jiah$treatment)
+table(jiah[jiah$treatment==1,]$idclus, jiah[jiah$treatment==1,]$endline)
+
+# outcome
+# school attendance, dietary diversity, and mental health
+# In intervention vs control clusters, mean dietary diversity score was 4·0 (SD 1·5) vs 3·6 (SD 1·2) (adjDiff 0·34; 95%CI -0·23, 0·93, p = 0·242); mean Brief Problem Monitor-Youth (mental health) score was 12·5 (SD 6·0) vs 11·9 (SD 5·9) (adjDiff 0·02, 95%CI -0·06, 0·13, p = 0·610); and school enrolment rates were 70% vs 63% (adjOR 1·39, 95%CI 0·89, 2·16, p = 0·142)
+jiah$alcohol_ever # binary
+jiah$mentalhealth # continuous
+jiah$diet_score # count
+
+lm(mentalhealth ~ treatment + endline, data = jiah)
+lm(mentalhealth ~ treatment + endline + idclus, data = jiah)
+
+
+```
+
+```{r * Analyze Jiah data}
+library(dplyr)
+table(jiah$idclus, jiah$endline)
+# remove clusters with missing data from a period
+jiah.complete <- jiah %>% filter(!idclus %in% c(1, 4, 12, 21, 22, 25, 26, 31, 34, 37))
+table(jiah.complete$idclus, jiah.complete$endline)
+table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)
+length(unique(jiah.complete$idclus)) # 28 total clusters
+
+length(table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)) # 14 clusters w/ trtmnt
+length(table(jiah.complete$idclus)) # 28 clusters
+
+# get cluster means & use that as the weight...
+cellmeansize <- as.data.frame(rowMeans(table(jiah.complete$idclus, jiah.complete$endline)))
+colnames(cellmeansize) <- "mean_Freq"
+cellmeansize$idclus <- rownames(cellmeansize)
+cellmeansize
+
+# get cluster:period size
+cellsize <- as.data.frame(table(jiah.complete$idclus, jiah.complete$endline))
+colnames(cellsize) <- c("idclus", "endline", "Freq")
+cellsize
+
+# # get cp2 size
+cellsize2 <- cellsize %>% filter(endline==1) %>% select(-endline)
+colnames(cellsize2) <- c("idclus", "Freq2")
+
+# merge both into Haines_pb.df
+jiah.complete <- merge(jiah.complete, cellmeansize, by="idclus")
+jiah.complete <- merge(jiah.complete, cellsize, by=c("idclus","endline"))
+jiah.complete <- merge(jiah.complete, cellsize2, by=c("idclus"))
+
+jiah.complete$W1 <- 1/jiah.complete$Freq
+# jiah.complete$mean_W1 <- 1/jiah.complete$mean_Freq
+# jiah.complete$W2 <- 1/jiah.complete$Freq2
+
+# jiah saves dataset
+jiahsaves <- data.frame(
+  analysis = c("IEE","FE","EME","NEME", "IEEw", "FEw"),
+  est = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"]
+  ), # correct, checked
+  SE_mod = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"]
+  ) # correct, checked
+)
+
+# jackknife
+saves_jk <- c("cluster_i", "IEE", "IEEw", "FE", "FEw", "EME", "NEME")
+jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+names(jk.df) <- saves_jk
+jk.df
+for(i in unique(jiah.complete$idclus)){
+  jk.dat <- jiah.complete %>% filter(idclus!=i)
+  # jk.estimates <- c(jk.estimates, 
+  #                   summary(lme4::lmer(outcome ~ intervention + time-1 + (1|cluster), data = jk.dat)
+  #                   )$coef[,"Estimate"]["intervention"]
+  # )
+  jk.df <- jk.df %>%
+    add_row(
+      cluster_i=as.numeric(i),
+      IEE = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat))$coef["treatment1","Estimate"],
+      IEEw = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      FE = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat))$coef["treatment1","Estimate"],
+      FEw = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      EME = summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jk.dat))$coef["treatment1","Estimate"],
+      NEME =  summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jk.dat))$coef["treatment1","Estimate"]
+    )
+  print(nrow(jk.df))
+}
+jk.df
+jiahsaves$analysis
+jiahsaves$SE_jk <- c(
+  sqrt(sum((jk.df$IEE-filter(jiahsaves,analysis=="IEE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FE-filter(jiahsaves,analysis=="FE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$EME-filter(jiahsaves,analysis=="EME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$NEME-filter(jiahsaves,analysis=="NEME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$IEEw-filter(jiahsaves,analysis=="IEEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FEw-filter(jiahsaves,analysis=="FEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df)))
+) # correct, checked
+jiahsaves
+
+# create 95% CI
+jiahsaves
+jiahsaves$mod_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_mod
+jiahsaves$mod_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_mod
+jiahsaves$jk_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_jk
+jiahsaves$jk_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_jk
+jiahsaves
+
+rbind(
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=mod_95_H, CI_95_L=mod_95_L) %>% mutate(varianceestimator="Model"),
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=jk_95_H, CI_95_L=jk_95_L) %>% mutate(varianceestimator="Jackknife")
+) %>% 
+  # create levels for variance estimator
+  mutate(varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife"))) %>% 
+  # create levels for analysis variables
+  mutate(analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw"))) %>% 
+  # create variable for weighted and unweighted analayses
+  mutate(weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")) %>%
+ggplot(., aes(x=analysis, y=est, group=varianceestimator, color=varianceestimator)) + 
+  geom_point(position=position_dodge(width=0.4)) +
+  geom_errorbar(aes(ymin=CI_95_L, ymax=CI_95_H), width=.2,
+                position=position_dodge(0.4)) +
+  facet_grid(~weighted, scales="free") +
+  ylim(-0.1,0.25) +
+  geom_hline(yintercept=0, linetype="dashed") + 
+  labs(y=NULL, x=NULL, title = "Re-analysis of JIAH trial", subtitle="Effect of community youth teams on mental health scores", color="95% CI variance estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 350
+
+  
+  
+
+
+# # unweighted analyses
+# lm(mentalhealth ~ treatment + endline, data = jiah.complete) # 0.01776      
+# lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete) # 0.0190515    
+# lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete) # 0.04703 # why's this so different, maybe there's something else at play, confounding or something?
+# lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete) # 0.02876
+# 
+# # weighted analyses
+# # IEEw
+# lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1) # 0.01876
+# # lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$mean_W1) # 0.01322
+# # lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W2) # 0.01876 -> consistent with cATE
+# # FEw
+# lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1) # 0.0197017
+# # lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$mean_W1) # 0.0137342
+# # lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W2) # 0.025201 -> not consistent w/ cATE
+# # the fact that using W2 isn't the same as W1 probably indicates the ratio isn't independent...
+# 
+# # # EMEw
+# # WeMix::mix(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete, weights=c("mean_W1", "mean_W1")) # 0.05582461
+# # WeMix::mix(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete, weights=c("W2", "W2")) # 0.03897842
+# # # NEMEw
+# # WeMix::mix(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete, weights=c("mean_W1", "mean_W1", "mean_W1")) # 0.03437274
+# # WeMix::mix(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete, weights=c("W2", "W2", "W2")) # 0.07484232
+# # # Why's the resulting analysis value so high?
+# 
+# # IEE & FE give similar results to IEEw and FEw, which sort of implies to me that there isn't any informative cluster size?
+# # I think it makes a lot of sense to analyze with a cp weight, mean_cluster weight is "theoretically consistent" whereas mean_cluster is probably empirically unbiased...?
+# 
+# # anyway...unequal cluster sizes...idk...
+```
+
