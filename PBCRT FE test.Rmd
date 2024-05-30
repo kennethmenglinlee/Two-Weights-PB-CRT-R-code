@@ -2379,3 +2379,260 @@ ggplot(., aes(x=analysis, y=est, group=varianceestimator, color=varianceestimato
 # # anyway...unequal cluster sizes...idk...
 ```
 
+5/25/2024
+# Weights in the weighted mixed effects models
+```{r * Analyze EMEw weights}
+# Test
+
+EMEw_weight <- function(K1, K2, rho, P1, Return){
+  w1 <- (1 + (K1-1)*rho)/(1 + (2*K1-1)*rho)
+  w2 <- (1 + (K2-1)*rho)/(1 + (2*K2-1)*rho)
+
+  Ew <- P1*w1 + (1-P1)*w2
+  
+  if(Return=="w1"){
+    return(w1)
+  }else if(Return=="w2"){
+    return(w2)
+  }else if (Return=="all"){
+    return(c(w1, w2, Ew))
+  }else if(Return=="fractions"){
+    return(c(w1/Ew, w2/Ew))
+  }
+}
+
+# our simulation parameters
+EMEw_weight(K1=20, K2=100, rho=0.05, P1=0.5, Return="fractions")
+
+# Change P1: gives more weight to K2
+EMEw_weight(K1=20, K2=100, rho=0.05, P1=0.1, Return="fractions")
+
+# Change K1: Differences between w1 and w2 are pretty big
+EMEw_weight(K1=10, K2=100, rho=0.05, P1=0.5, Return="fractions")
+
+# Change rho: Differences between w1 and w2 are larger for lower rho
+EMEw_weight(K1=20, K2=100, rho=0.01, P1=0.5, Return="fractions")
+
+# check maximum P(S=1)
+EMEw_weight(K1=20, K2=100, rho=0.01, P1=0.5, Return="all")
+sqrt(0.6655518)/(sqrt(0.8561151) + sqrt(0.6655518))
+EMEw_weight(K1=20, K2=100, rho=0.01, P1=0.5, Return="fractions")
+sqrt(0.8747668)/(sqrt(1.1252332) + sqrt(0.8747668))
+
+# generate EMEw data
+library(dplyr)
+library(reshape2)
+
+saves <- c("SizeRatio", "ICC", "P1", "weight1", "weight2", "scaledweight1", "scaledweight2")
+EMEw_data <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(EMEw_data) <- saves
+for(bigk in c(100, 10000)){
+  for(k in c(10, 20, 50)){
+    k1 = k
+    k2 = bigk
+    optimumrho = 1/(1+sqrt(2*k1*k2))
+    
+    optimumw1 = (1 + (k1-1)*optimumrho)/(1 + (2*k1-1)*optimumrho)
+    optimumw2 = (1 + (k2-1)*optimumrho)/(1 + (2*k2-1)*optimumrho)
+    optimumP = sqrt(optimumw2)/(sqrt(optimumw1) + sqrt(optimumw2))
+    
+    
+    for(r in seq(0, 1, by=0.001)){ # rho
+      # for(r in seq(0, 1, by=0.0001)){ # rho # for more hd comparisons to check derivations
+      # for(p in c(0.5, 0.7, 0.9)){
+      for(p in c(0.5, 0.9, optimumP)){ # include optimum p
+        EMEw_data <- EMEw_data %>% 
+          add_row(
+            SizeRatio = k1/k2,
+            # SizeRatio = k/1000000,
+            ICC = r,
+            P1 = p,
+            weight1 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="fractions")[1],
+            weight2 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="fractions")[2],
+            
+            scaledweight1 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="w1"),
+            scaledweight2 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="w2")
+            
+            # weight1 = EMEw_weight(K1=k, K2=1000000, rho=r, P1=p, Return="fractions")[1],
+            # weight2 = EMEw_weight(K1=k, K2=1000000, rho=r, P1=p, Return="fractions")[2]
+          )
+      }
+    }
+  }
+}
+# # rename the facet variables
+# EMEw_data$SizeRatio <- paste0("Subpop c-p size ratio: ",EMEw_data$SizeRatio)
+# EMEw_data$P1 <- paste0("P(p=1) = ",EMEw_data$P1)
+
+EMEw_data$diffscaledweight = EMEw_data$scaledweight1 - EMEw_data$scaledweight2
+EMEw_data$diffweight = EMEw_data$weight1 - EMEw_data$weight2
+EMEw_data_backup <- EMEw_data
+EMEw_data %>% head()
+
+# [test] max rho
+# SizeRatio == 10/100
+1/(2*sqrt(10*100)+1) # delta
+EMEw_data %>% filter(SizeRatio==0.1) %>% filter(diffscaledweight==max(filter(EMEw_data, SizeRatio==0.1)$diffscaledweight))
+1/(sqrt(2*10*100)+1) # lambda1 - lambda2
+EMEw_data %>% filter(SizeRatio==0.1) %>% filter(diffweight==max(filter(EMEw_data, SizeRatio==0.1)$diffweight))
+# SizeRatio == 20/100
+1/(2*sqrt(20*100)+1) # delta
+EMEw_data %>% filter(SizeRatio==0.2) %>% filter(diffscaledweight==max(filter(EMEw_data, SizeRatio==0.2)$diffscaledweight))
+1/(sqrt(2*20*100)+1) # lambda1 - lambda2
+EMEw_data %>% filter(SizeRatio==0.2) %>% filter(diffweight==max(filter(EMEw_data, SizeRatio==0.2)$diffweight))
+# Size Ratio == 50/100
+1/(2*sqrt(50*100)+1) # delta
+EMEw_data %>% filter(SizeRatio==0.5) %>% filter(diffscaledweight==max(filter(EMEw_data, SizeRatio==0.5)$diffscaledweight))
+1/(sqrt(2*50*100)+1) # lambda1 - lambda2
+EMEw_data %>% filter(SizeRatio==0.5) %>% filter(diffweight==max(filter(EMEw_data, SizeRatio==0.5)$diffweight))
+
+
+# melt the data
+EMEw_data <- melt(EMEw_data %>% select(-c(scaledweight1, scaledweight2, diffscaledweight, diffweight)), id.vars = c("SizeRatio", "ICC", "P1"))
+# rename the melted data
+colnames(EMEw_data) <- c("SizeRatio", "ICC", "P1", "weight", "value")
+EMEw_data$P1 <- round(EMEw_data$P1, 2)
+# check the data
+head(EMEw_data)
+
+EMEw_data$maxICC <- ifelse(EMEw_data$SizeRatio %in% c(0.1, 0.2, 0.5), 1/(1+100*sqrt(2*EMEw_data$SizeRatio)), 1/(1+10000*sqrt(2*EMEw_data$SizeRatio)))
+
+EMEw_data$P1cat <- ifelse(EMEw_data$P1==0.5, 0.5, ifelse(EMEw_data$P1==0.9, 0.9, "Optimal"))
+
+# graph EMEw data
+library(ggplot2)
+library(latex2exp)
+
+# [Appendix]
+EMEw_data %>%
+  ggplot(aes(x=ICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(P1cat ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,s}$"), color=NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
+  geom_vline(data  = EMEw_data, aes(xintercept = maxICC), linetype="dashed", color = "gray45") +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 800, height: 500
+
+# [For manuscript]
+EMEw_data %>%
+  filter(SizeRatio %in% c(0.1, 0.2, 0.5)) %>%
+  filter(P1 == 0.5) %>%
+  ggplot(aes(x=ICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(. ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,s}$"), color=NULL) +
+  # scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
+  scale_y_continuous(limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 500, height: 400
+```
+
+```{r * Analyze NEMEw weights}
+
+NEMEw_weight <- function(K1, K2, wprho, bprho, P1, Return){
+  w1 <- (1 + (K1-1)*wprho)/((1 + (2*K1-1)*wprho)^2 - (K1*bprho)^2)
+  w2 <- (1 + (K2-1)*wprho)/((1 + (2*K2-1)*wprho)^2 - (K2*bprho)^2)
+
+  Ew <- P1*w1 + (1-P1)*w2
+  
+  if(Return=="w1"){
+    return(w1)
+  }else if(Return=="w2"){
+    return(w2)
+  }else if (Return=="all"){
+    return(c(w1, w2, Ew))
+  }else if(Return=="fractions"){
+    return(c(w1/Ew, w2/Ew))
+  }
+}
+
+# our simulation parameters
+NEMEw_weight(K1=20, K2=100, wprho=0.06, bprho=0.05, P1=0.5, Return="fractions")
+
+# Change P1: gives more weight to K2
+NEMEw_weight(K1=20, K2=100, wprho=0.06, bprho=0.05, P1=0.1, Return="fractions")
+
+# Change K1: Differences between w1 and w2 are pretty big
+NEMEw_weight(K1=10, K2=100, wprho=0.06, bprho=0.05, P1=0.5, Return="fractions")
+
+# Change rho: Differences between w1 and w2 are larger for lower rho
+NEMEw_weight(K1=20, K2=100, wprho=0.02, bprho=0.01, P1=0.5, Return="fractions")
+
+# generate NEMEw data
+library(dplyr)
+library(reshape2)
+
+cac=0.8
+
+saves <- c("SizeRatio", "wpICC", "CAC", "P1", "weight1", "weight2")
+NEMEw_data <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(NEMEw_data) <- saves
+for(k in c(10, 20, 50)){
+  for(r in seq(0, 1, by=0.01)){ # rho
+    for(p in c(0.5, 0.7, 0.9)){
+      NEMEw_data <- NEMEw_data %>% 
+        add_row(
+          SizeRatio = k/100,
+          wpICC = r,
+          CAC = cac,
+          P1 = p,
+          weight1 = NEMEw_weight(K1=k, K2=100, wprho=r, bprho=r*cac, P1=p, Return="fractions")[1],
+          weight2 = NEMEw_weight(K1=k, K2=100, wprho=r, bprho=r*cac, P1=p, Return="fractions")[2]
+        )
+    }
+  }
+}
+# # rename the facet variables
+# NEMEw_data$SizeRatio <- paste0("Subpop c-p size ratio: ",NEMEw_data$SizeRatio)
+# NEMEw_data$P1 <- paste0("P(p=1) = ",NEMEw_data$P1)
+
+# melt the data
+NEMEw_data <- melt(NEMEw_data, id.vars = c("SizeRatio", "wpICC", "CAC", "P1"))
+# rename the melted data
+colnames(NEMEw_data) <- c("SizeRatio", "wpICC", "CAC", "P1", "weight", "value")
+# check the data
+head(NEMEw_data)
+
+
+# graph NEMEw data
+library(ggplot2)
+library(latex2exp)
+
+# [Appendix]
+NEMEw_data %>%
+  ggplot(aes(x=wpICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(P1 ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="NEMEw weights (CAC=0.8)", y=TeX("$\\lambda_{NEMEw,s}$"), x="within-period ICC", color=NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL), limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 500, height: 420
+
+# [for manuscript]
+NEMEw_data %>%
+  filter(P1 == 0.5) %>%
+  ggplot(aes(x=wpICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(. ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="NEMEw weights (CAC=0.8)", y=TeX("$\\lambda_{NEMEw,s}$"), x="within-period ICC", color=NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL), limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 500, height: 400
+```

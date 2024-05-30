@@ -381,7 +381,7 @@ for(n in 1:n_sims){
   pb.df2
   
   # generate outcomes 
-  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sigma2e)
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
   
   # # create weighted df
   pb.df2weighted <- pb.df2
@@ -500,6 +500,322 @@ cATE <- (trtmnteffectL + trtmnteffectH) / 2
 sim.df
 write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",CAC,"CAC_",ICC,"ICC",".csv"))
 ```
+
+```{r * sim PB-CRT data [additional EME biased scenario]}
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+set.seed(178934)
+hetTrtmnt = T
+
+# set.seed(1583)
+# hetTrtmnt = F
+
+
+# SET PB-CRT design 
+# I=26 # cluster
+# I=20
+I=10
+J=2 # 2 periods
+Kmax=100
+# Kmax=1000
+
+# SET treatment effect
+if(hetTrtmnt == T){
+  trtmnteffectL = 0.2
+  trtmnteffectH = 0.5 # 0.2, 0.5
+}else{
+  trtmnteffectL = 0.35
+  trtmnteffectH = 0.35
+}
+
+# SET random effect sequences
+ICC = 0.001
+# CAC = 0.8 # As defined in Ouyang tau2a/(tau2a + tau2g)
+# CAC=0.99
+CAC=1 # [test]
+
+sigma2e = 1
+tau2a = ICC*sigma2e/(1-ICC)
+tau2a
+tau2g = tau2a*(1-CAC)/CAC # fixed CAC following the definition in Ouyang
+tau2g
+
+# SET period effects
+period <- 0.2
+
+# set randomization
+P1 = 0.5
+# P1 = 0.9
+# set ratio size
+xi = 0.1
+# xi=0.05
+# xi=0.01
+# xi=0.005
+# xi=1 # [test]
+
+# generate output dataset
+saves <- c(
+  # paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=4), c("_est", "_var", "_var_CR2", "_var_jk")),
+  # paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=3), c("_est", "_var", "_var_jk"))
+  paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=1), c("_est")),
+  paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=1), c("_est"))
+)
+saves
+sim.df <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(sim.df) <- saves # rename columns
+sim.df
+
+# 5/26/2024 test
+EMEICC <- c()
+EMEwICC <- c()
+
+# generate jackknife saves
+saves_jk <- c("cluster_i","IEE", "IEEw", "FE", "FEw","EME", "EMEw", "NEME", "NEMEw")
+
+# generate n_sims
+n_sims <- 100
+
+ptm <- proc.time()
+for(n in 1:n_sims){
+  
+  ####### generate cluster:period cell means data ####### 
+  
+  # generate alpha
+  I
+  alpha <- rnorm(n=I, mean=0, sd=sqrt(tau2a))
+  alpha
+  alpha.mat <- matrix(rep(alpha, J), nrow=I, ncol=J)
+  alpha.mat
+  # generate gamma
+  gamma <- rnorm(n=I*J, mean=0, sd=sqrt(tau2g))
+  gamma.mat <- matrix(gamma, nrow=I, ncol=J)
+  gamma.mat
+  
+  # generate period effects
+  period.mat <- matrix(c(rep(1, I), rep(1+period, I)), nrow=I, ncol=J)
+  period.mat
+  
+  # randomly generate random treatment
+  trtmnteffect.mat <- matrix(
+    rep(c(rep(trtmnteffectL,I*P1), rep(trtmnteffectH,I-I*P1)), J),
+    nrow=I,
+    ncol=J
+  )
+    trtmnteffect.mat
+  subpopulation.mat <- ifelse(trtmnteffect.mat==trtmnteffectL,"L", ifelse(trtmnteffect.mat==trtmnteffectH,"H",0))
+  subpopulation.mat
+  
+  # randomly select clusters that will receive intervention 
+  z <- sample(c(rep(0,I/2),rep(1,I/2)), I)
+  z <- c(rep(0,I), z)
+  z
+  z.mat <- matrix(z, nrow=I, ncol=J) # add baseline and make into matrix
+  z.mat
+  # check
+  c(z.mat) == z
+  
+  # generate outcomes matrix
+  ztrtmnt.mat <- z.mat * trtmnteffect.mat
+  ztrtmnt.mat
+  
+  # sum up everything
+  alpha.mat
+  gamma.mat
+  period.mat
+  ztrtmnt.mat
+  outcomes.mat <- alpha.mat + gamma.mat + period.mat + ztrtmnt.mat
+  outcomes.mat
+  
+
+  
+  # generate df
+  means.df <- data.frame(
+    cluster = rep(1:I, 2),
+    period = rep(c(0,1), each=I),
+    z = c(z.mat),
+    avgoutcomes = c(outcomes.mat),
+    subpopulation = c(subpopulation.mat)
+  )
+  means.df
+  
+  # [check]
+  sd(outcomes.mat[,1])
+  sd(filter(means.df, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  
+  # generate different cluster:period sizes
+  n_cpL <- rpois(I*P1, Kmax*xi) # variable cluster sizes and equal cp sizes
+  n_cpH <- rpois(I-I*P1, Kmax) # variable cluster sizes and equal cp sizes
+  n_cpL
+  n_cpH
+  n_cp <- c(n_cpL, n_cpH)
+  n_cp2 <- rep(n_cp, 2)
+  table(n_cp2, c(subpopulation.mat)) # check
+  
+  # replicate cluster:period mean entries by corresponding cluster size
+  means.df
+  means.df$Freq <- n_cp2
+  pb.df2 <- as.data.frame(lapply(means.df, rep, n_cp2))
+  pb.df2
+  table(pb.df2$Freq) # looks correct
+  
+  # [check]
+  sd(filter(pb.df2, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  # generate outcomes 
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
+  sd(filter(pb.df2, period==0, cluster==1)$outcome) # should be ~ 1
+
+  
+  # # create weighted df
+  pb.df2weighted <- pb.df2
+  pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+  
+  # prepare df for analysis
+  pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
+  # pb.df2$period <- as.factor(pb.df2$period)
+  pb.df2weighted$intervention <- pb.df2weighted$z
+  
+  # [check] design
+  table(pb.df2weighted$cluster, pb.df2weighted$period)
+  table(pb.df2weighted$cluster[pb.df2weighted$intervention==1], pb.df2weighted$period[pb.df2weighted$intervention==1])
+  
+  # [check] values
+  # [check] tau2a
+  sd(filter(pb.df2weighted, period==0)$avgoutcome)
+  sqrt(tau2a)
+  # check sigma2e -> should be ~ 1
+  sd(filter(pb.df2weighted, period==0, cluster==1)$outcome)
+  sqrt(sigma2e)
+
+  
+  # analyses
+  IEE <- lm(outcome ~ intervention + period, data = pb.df2weighted)
+  
+  IEEw <- lm(outcome ~ intervention + period, data = pb.df2weighted, weights = pb.df2weighted$W1)
+  
+  FE <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted)
+
+  FEw <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+
+  EME <- lme4::lmer(outcome ~ intervention + period + (1|cluster), data = pb.df2weighted)
+
+  EMEw <- mix(outcome ~ intervention + period + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+
+  NEME <- lme4::lmer(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
+
+  # outputs an error?
+  NEMEw <- mix(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+
+  # # Jackknife
+  # jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+  # names(jk.df) <- saves_jk
+  # jk.df
+  # for(i in levels(pb.df2weighted$cluster)){
+  #   jk.dat <- pb.df2weighted %>% filter(cluster!=i)
+  #   
+  #   jk.df <- jk.df %>%
+  #     add_row(
+  #       cluster_i=as.numeric(i),
+  #       IEE = summary(lm(outcome ~ intervention + period, data = jk.dat))$coef[,"Estimate"]["intervention"],
+  #       IEEw = summary(lm(outcome ~ intervention + period, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+  #       FE = summary(lm(outcome ~ intervention + period + cluster, data = jk.dat))$coef[,"Estimate"]["intervention"],
+  #       FEw = summary(lm(outcome ~ intervention + period + cluster, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+  #       EME = summary(lme4::lmer(outcome ~ intervention + period + (1|cluster), data = jk.dat))$coef[,"Estimate"]["intervention"],
+  #       EMEw = summary(mix(outcome ~ intervention + period + (1|cluster), data=jk.dat, weights=c("W1", "W1")))$coef[,"Estimate"]["intervention"],
+  #       NEME = summary(lme4::lmer(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data = jk.dat))$coef[,"Estimate"]["intervention"],
+  #       NEMEw = summary(mix(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data=jk.dat, weights=c("W1", "W1", "W1")))$coef[,"Estimate"]["intervention"]
+  #     )
+  #   print(paste0(nrow(sim.df),".",i))
+  # }
+  # jk.df
+
+  sim.df <- sim.df %>% 
+    add_row(
+      IEE_est = summary(IEE)$coef[,"Estimate"]["intervention"],
+      # IEE_var = summary(IEE)$coef[,"Std. Error"]["intervention"]^2,
+      # IEE_var_CR2 = clubSandwich::vcovCR(IEE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      # IEE_var_jk = sum((jk.df$IEE-summary(IEE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      IEEw_est = summary(IEEw)$coef[,"Estimate"]["intervention"],
+      # IEEw_var = summary(IEEw)$coef[,"Std. Error"]["intervention"]^2,
+      # IEEw_var_CR2 = clubSandwich::vcovCR(IEEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      # IEEw_var_jk = sum((jk.df$IEEw-summary(IEEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FE_est = summary(FE)$coef[,"Estimate"]["intervention"],
+      # FE_var = summary(FE)$coef[,"Std. Error"]["intervention"]^2,
+      # FE_var_CR2 = clubSandwich::vcovCR(FE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      # FE_var_jk = sum((jk.df$FE-summary(FE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FEw_est = summary(FEw)$coef[,"Estimate"]["intervention"],
+      # FEw_var = summary(FEw)$coef[,"Std. Error"]["intervention"]^2,
+      # FEw_var_CR2 = clubSandwich::vcovCR(FEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      # FEw_var_jk = sum((jk.df$FEw-summary(FEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      EME_est = summary(EME)$coef[,"Estimate"]["intervention"],
+      # EME_var = summary(EME)$coef[,"Std. Error"]["intervention"]^2,
+      # EME_var_jk = sum((jk.df$EME-summary(EME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      EMEw_est = summary(EMEw)$coef[,"Estimate"]["intervention"],
+      # EMEw_var = summary(EMEw)$coef[,"Std. Error"]["intervention"]^2 ,
+      # EMEw_var_jk = sum((jk.df$EMEw-summary(EMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEME_est = summary(NEME)$coef[,"Estimate"]["intervention"],
+      # NEME_var = summary(NEME)$coef[,"Std. Error"]["intervention"]^2,
+      # NEME_var_jk = sum((jk.df$NEME-summary(NEME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEMEw_est = summary(NEMEw)$coef[,"Estimate"]["intervention"] #,
+      # NEMEw_var = summary(NEMEw)$coef[,"Std. Error"]["intervention"]^2,
+      # NEMEw_var_jk = sum((jk.df$NEMEw-summary(NEMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df))
+    )
+  
+  # test
+  EMEICC <- c(EMEICC, ((as.data.frame(VarCorr(EME))$vcov[1])/(as.data.frame(VarCorr(EME))$vcov[1] + as.data.frame(VarCorr(EME))$vcov[2])))
+  EMEwICC <- c(EMEwICC, (summary(EMEw)$vars[1,1])/(summary(EMEw)$vars[2,1] + summary(EMEw)$vars[1,1]))
+
+  
+  
+  print(nrow(sim.df))
+}
+etm <- proc.time()-ptm 
+etm
+
+# check ICC values
+ICC
+mean(EMEICC)
+mean(EMEwICC)
+
+xi
+P1
+
+# cATE with superpopulation
+# cATE <- (trtmnteffectL + trtmnteffectH) / 2
+cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
+
+# # cATE with finite population
+# sum(ztrtmnt.mat) / (I/2)
+
+# check results
+
+# weighted analyses [not estimating the right estimand]
+# (mean(sim.df$IEE_est) - cATE)/cATE
+# (mean(sim.df$FE_est) - cATE)/cATE
+# (mean(sim.df$EME_est) - cATE)/cATE
+# (mean(sim.df$NEME_est) - cATE)/cATE
+
+# weighted analyses [estimating the "right" estimand]
+(mean(sim.df$IEEw_est) - cATE)/cATE # -0.01000265 (1000 sims, CAC=0.2)
+(mean(sim.df$FEw_est) - cATE)/cATE # 0.00204578 (1000 sims, CAC=0.2)
+(mean(sim.df$EMEw_est) - cATE)/cATE # -0.001779746 (1000 sims, CAC=0.2)
+(mean(sim.df$NEMEw_est) - cATE)/cATE # -0.1222478 (1000 sims, CAC=0.2)
+# EMEw is strangely not that biased...?
+
+# sim.df
+# write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",CAC,"CAC_",ICC,"ICC_Scenario2_p1_",P1,"xi_",100*xi,"_100",".csv"))
+```
+
 
 # ANALYSIS
 ```{r * clean analysis df w/ informative cluster sizes}
