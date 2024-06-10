@@ -514,6 +514,8 @@ hetTrtmnt = T
 
 
 # SET PB-CRT design 
+# I=26 # cluster
+# I=20
 I=10
 J=2 # 2 periods
 Kmax=200
@@ -530,14 +532,19 @@ if(hetTrtmnt == T){
 
 # set randomization
 P1 = 0.5
+# P1 = 0.9
 # set ratio size
 xi = 0.1
 # xi=0.05
-
+# xi=0.01
+# xi=0.005
+# xi=1 # [test]
 
 # SET random effect sequences
 # ICC = 0.001
 ICC = 1/(1+Kmax*sqrt(2*xi))
+# CAC = 0.8 # As defined in Ouyang tau2a/(tau2a + tau2g)
+# CAC=0.99
 CAC=1 # [test]
 
 sigma2e = 1
@@ -808,23 +815,7 @@ pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (
 # EMEw is strangely not that biased...?
 
 # sim.df
-# write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",round(CAC),"CAC_OptimalICC_Scenario2_p1_",xi,"xi_",Kmax,"Kmax",".csv"))
-
-##### Extra Bias Plot 1
-sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_1CAC_OptimalICC_Scenario2_p1_0.1xi_200Kmax.csv")
-
-trtmnteffectL = 0.2
-trtmnteffectH = 0.5 # 0.2, 0.5
-Kmax=200
-# Kmax=1000
-# set randomization
-P1 = 0.5
-# set ratio size
-xi = 0.1
-# xi=0.05
-cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
-pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
-
+write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",round(CAC),"CAC_OptimalICC_Scenario2_p1_",xi,"xi_",Kmax,"Kmax",".csv"))
 
 # generate Bias (cATE)
 bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cATE
@@ -836,7 +827,6 @@ results.relbias_cate <- colMeans(relbias_cate.df)
 results.relbias_pate <- colMeans(relbias_pate.df)
 
 library(ggplot2)
-library(latex2exp)
 # plot relative bias
 rbind(
   results.relbias_pate %>% 
@@ -871,86 +861,9 @@ rbind(
   geom_hline(yintercept = 5, linetype = "dashed") +
   geom_hline(yintercept = -5, linetype = "dashed") +
   # scale_fill_manual(values = rep(c("green4", "blue4", "purple3", "red2"),2) ) +
-  labs(y="Relative Bias (%)", x=NULL, 
-       title = TeX(paste0("Relative Bias (%) ($K_{i-,1}=$",xi*Kmax,", $K_{i-,2}=$",Kmax,", $\\zeta=$",xi,")"))
-       ) +
+  labs(y="Relative Bias (%)", x=NULL, title = "Relative Bias (%)") +
   theme_bw() +
   theme(legend.position = "none")
-# width: 500, height: 350
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_2_Figure_1.tiff"), plot = last_plot(),
-       width=5, height=3.5, units="in",
-       dpi=800, device='tiff')
-
-##### Extra Bias Plot 2
-sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_1CAC_OptimalICC_Scenario2_p1_0.05xi_1000Kmax.csv")
-
-trtmnteffectL = 0.2
-trtmnteffectH = 0.5 # 0.2, 0.5
-# Kmax=200
-Kmax=1000
-# set randomization
-P1 = 0.5
-# set ratio size
-# xi = 0.1
-xi=0.05
-cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
-pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
-
-# generate Bias (cATE)
-bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cATE
-relbias_cate.df <- (bias_cate.df/cATE)*100
-# generate Bias (pATE)
-bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pATE
-relbias_pate.df <- (bias_pate.df/pATE)*100
-results.relbias_cate <- colMeans(relbias_cate.df)
-results.relbias_pate <- colMeans(relbias_pate.df)
-
-library(ggplot2)
-library(latex2exp)
-# plot relative bias
-rbind(
-  results.relbias_pate %>% 
-    reshape2::melt() %>% 
-    mutate(
-      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
-      result = "Relative Bias (%)",
-      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
-      estimand = "pATE"
-    )
-  ,
-  results.relbias_cate %>% 
-    reshape2::melt() %>% 
-    mutate(
-      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
-      result = "Relative Bias (%)",
-      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
-      estimand = "cATE"
-    )
-) %>%
-  # factor
-  mutate(
-    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
-    estimand = factor(estimand, levels=c("pATE","cATE"))
-         ) %>%
-  # plot
-  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
-  # ggplot(., aes(x=analysis, y=value, fill=analysis)) + 
-  geom_bar(stat = "identity") +
-  facet_grid(estimand~weighted, scales="free") +
-    # geom_hline(data = data.frame(result = c("Relative Bias (%)","Relative Bias (%)", "RMSE"), hline = c(5, -5, NA)), aes(yintercept = hline), linetype = "dashed") +
-  geom_hline(yintercept = 5, linetype = "dashed") +
-  geom_hline(yintercept = -5, linetype = "dashed") +
-  # scale_fill_manual(values = rep(c("green4", "blue4", "purple3", "red2"),2) ) +
-  labs(y="Relative Bias (%)", x=NULL, 
-       title = TeX(paste0("Relative Bias (%) ($K_{i-,1}=$",xi*Kmax,", $K_{i-,2}=$",Kmax,", $\\zeta=$",xi,")"))
-       ) +
-  theme_bw() +
-  theme(legend.position = "none")
-# width: 500, height: 350
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_2_Figure_2.tiff"), plot = last_plot(),
-       width=5, height=3.5, units="in",
-       dpi=800, device='tiff')
-
 ```
 
 
@@ -960,8 +873,8 @@ library(dplyr)
 
 n_sims = 1000
 
-ICS=T
-# ICS=F
+# ICS=T
+ICS=F
 
 if(ICS==T){
   sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_0.8CAC_0.05ICC.csv")
@@ -1233,9 +1146,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "none")
 # width: 500, height: 300
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_7.tiff"), plot = last_plot(),
-       width=5, height=3, units="in",
-       dpi=800, device='tiff')
 
 # plot RMSE
 rbind(
@@ -1318,9 +1228,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 400
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_8.tiff"), plot = last_plot(),
-       width=5, height=4, units="in",
-       dpi=800, device='tiff')
 
 # plot power
 rbind(
@@ -1354,246 +1261,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 300
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_9.tiff"), plot = last_plot(),
-       width=5, height=3, units="in",
-       dpi=800, device='tiff')
-```
-
-```{r * clean analysis df w/o informative cluster sizes}
-library(dplyr)
-
-n_sims = 1000
-
-# ICS=T
-ICS=F
-
-if(ICS==T){
-  sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_0.8CAC_0.05ICC.csv")
-  pate <- (1*0.2 + 5*0.5)/(6)
-  cate <- (0.2+0.5)/2
-}else if(ICS==F){
-  sim.df <- read.csv("results_1000sim_FALSEhettrtmnt_0.8CAC_0.05ICC.csv")
-  pate <- (1*0.35 + 5*0.35)/(6)
-  cate <- (0.35+0.35)/2
-}
-
-
-head(sim.df)
-colnames(sim.df)
-nrow(sim.df)
-
-
-# generate Bias (cATE)
-bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cate
-relbias_cate.df <- (bias_cate.df/cate)*100
-# generate Bias (pATE)
-bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pate
-relbias_pate.df <- (bias_pate.df/pate)*100
-
-# efficiency [5/24/2024]
-efficiency.df <- sim.df %>%
-  select(
-    colnames(.[grepl("var",colnames(.))])
-  )
-
-# generate CI
-sim.df[grepl("est",colnames(sim.df))]
-CI.df <- sim.df %>%
-  mutate(
-    # IEE
-    IEE_mod_95_H = IEE_est + 1.96*sqrt(IEE_var),
-    IEE_mod_95_L = IEE_est - 1.96*sqrt(IEE_var),
-    IEE_CR2_95_H = IEE_est + 1.96*sqrt(IEE_var_CR2),
-    IEE_CR2_95_L = IEE_est - 1.96*sqrt(IEE_var_CR2),
-    IEE_jk_95_H = IEE_est + 1.96*sqrt(IEE_var_jk),
-    IEE_jk_95_L = IEE_est - 1.96*sqrt(IEE_var_jk),
-    # IEEw
-    IEEw_mod_95_H = IEEw_est + 1.96*sqrt(IEEw_var),
-    IEEw_mod_95_L = IEEw_est - 1.96*sqrt(IEEw_var),
-    IEEw_CR2_95_H = IEEw_est + 1.96*sqrt(IEEw_var_CR2),
-    IEEw_CR2_95_L = IEEw_est - 1.96*sqrt(IEEw_var_CR2),
-    IEEw_jk_95_H = IEEw_est + 1.96*sqrt(IEEw_var_jk),
-    IEEw_jk_95_L = IEEw_est - 1.96*sqrt(IEEw_var_jk),
-    # FE
-    FE_mod_95_H = FE_est + 1.96*sqrt(FE_var),
-    FE_mod_95_L = FE_est - 1.96*sqrt(FE_var),
-    FE_CR2_95_H = FE_est + 1.96*sqrt(FE_var_CR2),
-    FE_CR2_95_L = FE_est - 1.96*sqrt(FE_var_CR2),
-    FE_jk_95_H = FE_est + 1.96*sqrt(FE_var_jk),
-    FE_jk_95_L = FE_est - 1.96*sqrt(FE_var_jk),
-    # FEw
-    FEw_mod_95_H = FEw_est + 1.96*sqrt(FEw_var),
-    FEw_mod_95_L = FEw_est - 1.96*sqrt(FEw_var),
-    FEw_CR2_95_H = FEw_est + 1.96*sqrt(FEw_var_CR2),
-    FEw_CR2_95_L = FEw_est - 1.96*sqrt(FEw_var_CR2),
-    FEw_jk_95_H = FEw_est + 1.96*sqrt(FEw_var_jk),
-    FEw_jk_95_L = FEw_est - 1.96*sqrt(FEw_var_jk),
-    # EME
-    EME_mod_95_H = EME_est + 1.96*sqrt(EME_var),
-    EME_mod_95_L = EME_est - 1.96*sqrt(EME_var),
-    EME_jk_95_H = EME_est + 1.96*sqrt(EME_var_jk),
-    EME_jk_95_L = EME_est - 1.96*sqrt(EME_var_jk),
-    # EMEw
-    EMEw_mod_95_H = EMEw_est + 1.96*sqrt(EMEw_var),
-    EMEw_mod_95_L = EMEw_est - 1.96*sqrt(EMEw_var),
-    EMEw_jk_95_H = EMEw_est + 1.96*sqrt(EMEw_var_jk),
-    EMEw_jk_95_L = EMEw_est - 1.96*sqrt(EMEw_var_jk),
-    # NEME
-    NEME_mod_95_H = NEME_est + 1.96*sqrt(NEME_var),
-    NEME_mod_95_L = NEME_est - 1.96*sqrt(NEME_var),
-    NEME_jk_95_H = NEME_est + 1.96*sqrt(NEME_var_jk),
-    NEME_jk_95_L = NEME_est - 1.96*sqrt(NEME_var_jk),
-    # NEMEw
-    NEMEw_mod_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var),
-    NEMEw_mod_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var),
-    NEMEw_jk_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var_jk),
-    NEMEw_jk_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var_jk),
-    ) %>%
-  select(
-    colnames(.[grepl("95",colnames(.))])
-  )
-
-# generate CP (cATE)
-CP_cate.df <- CI.df %>%   
-  mutate(
-    # IEE
-    IEE_mod_CP = ifelse(cate > IEE_mod_95_L & cate < IEE_mod_95_H, 1, 0),
-    IEE_CR2_CP = ifelse(cate > IEE_CR2_95_L & cate < IEE_CR2_95_H, 1, 0),
-    IEE_jk_CP = ifelse(cate > IEE_jk_95_L & cate < IEE_jk_95_H, 1, 0),
-    # IEEw
-    IEEw_mod_CP = ifelse(cate > IEEw_mod_95_L & cate < IEEw_mod_95_H, 1, 0),
-    IEEw_CR2_CP = ifelse(cate > IEEw_CR2_95_L & cate < IEEw_CR2_95_H, 1, 0),
-    IEEw_jk_CP = ifelse(cate > IEEw_jk_95_L & cate < IEEw_jk_95_H, 1, 0),
-    # FE
-    FE_mod_CP = ifelse(cate > FE_mod_95_L & cate < FE_mod_95_H, 1, 0),
-    FE_CR2_CP = ifelse(cate > FE_CR2_95_L & cate < FE_CR2_95_H, 1, 0),
-    FE_jk_CP = ifelse(cate > FE_jk_95_L & cate < FE_jk_95_H, 1, 0),
-    # FEw
-    FEw_mod_CP = ifelse(cate > FEw_mod_95_L & cate < FEw_mod_95_H, 1, 0),
-    FEw_CR2_CP = ifelse(cate > FEw_CR2_95_L & cate < FEw_CR2_95_H, 1, 0),
-    FEw_jk_CP = ifelse(cate > FEw_jk_95_L & cate < FEw_jk_95_H, 1, 0),
-    # EME
-    EME_mod_CP = ifelse(cate > EME_mod_95_L & cate < EME_mod_95_H, 1, 0),
-    EME_jk_CP = ifelse(cate > EME_jk_95_L & cate < EME_jk_95_H, 1, 0),
-    # EMEw
-    EMEw_mod_CP = ifelse(cate > EMEw_mod_95_L & cate < EMEw_mod_95_H, 1, 0),
-    EMEw_jk_CP = ifelse(cate > EMEw_jk_95_L & cate < EMEw_jk_95_H, 1, 0),
-    # NEME
-    NEME_mod_CP = ifelse(cate > NEME_mod_95_L & cate < NEME_mod_95_H, 1, 0),
-    NEME_jk_CP = ifelse(cate > NEME_jk_95_L & cate < NEME_jk_95_H, 1, 0),
-    # NEMEw
-    NEMEw_mod_CP = ifelse(cate > NEMEw_mod_95_L & cate < NEMEw_mod_95_H, 1, 0),
-    NEMEw_jk_CP = ifelse(cate > NEMEw_jk_95_L & cate < NEMEw_jk_95_H, 1, 0)
-  ) %>%
-  select(
-    colnames(.[grepl("CP",colnames(.))])
-  )
-
-# generate CP (pATE)
-CP_pate.df <- CI.df %>%   
-  mutate(
-    # IEE
-    IEE_mod_CP = ifelse(pate > IEE_mod_95_L & pate < IEE_mod_95_H, 1, 0),
-    IEE_CR2_CP = ifelse(pate > IEE_CR2_95_L & pate < IEE_CR2_95_H, 1, 0),
-    IEE_jk_CP = ifelse(pate > IEE_jk_95_L & pate < IEE_jk_95_H, 1, 0),
-    # IEEw
-    IEEw_mod_CP = ifelse(pate > IEEw_mod_95_L & pate < IEEw_mod_95_H, 1, 0),
-    IEEw_CR2_CP = ifelse(pate > IEEw_CR2_95_L & pate < IEEw_CR2_95_H, 1, 0),
-    IEEw_jk_CP = ifelse(pate > IEEw_jk_95_L & pate < IEEw_jk_95_H, 1, 0),
-    # FE
-    FE_mod_CP = ifelse(pate > FE_mod_95_L & pate < FE_mod_95_H, 1, 0),
-    FE_CR2_CP = ifelse(pate > FE_CR2_95_L & pate < FE_CR2_95_H, 1, 0),
-    FE_jk_CP = ifelse(pate > FE_jk_95_L & pate < FE_jk_95_H, 1, 0),
-    # FEw
-    FEw_mod_CP = ifelse(pate > FEw_mod_95_L & pate < FEw_mod_95_H, 1, 0),
-    FEw_CR2_CP = ifelse(pate > FEw_CR2_95_L & pate < FEw_CR2_95_H, 1, 0),
-    FEw_jk_CP = ifelse(pate > FEw_jk_95_L & pate < FEw_jk_95_H, 1, 0),
-    # EME
-    EME_mod_CP = ifelse(pate > EME_mod_95_L & pate < EME_mod_95_H, 1, 0),
-    EME_jk_CP = ifelse(pate > EME_jk_95_L & pate < EME_jk_95_H, 1, 0),
-    # EMEw
-    EMEw_mod_CP = ifelse(pate > EMEw_mod_95_L & pate < EMEw_mod_95_H, 1, 0),
-    EMEw_jk_CP = ifelse(pate > EMEw_jk_95_L & pate < EMEw_jk_95_H, 1, 0),
-    # NEME
-    NEME_mod_CP = ifelse(pate > NEME_mod_95_L & pate < NEME_mod_95_H, 1, 0),
-    NEME_jk_CP = ifelse(pate > NEME_jk_95_L & pate < NEME_jk_95_H, 1, 0),
-    # NEMEw
-    NEMEw_mod_CP = ifelse(pate > NEMEw_mod_95_L & pate < NEMEw_mod_95_H, 1, 0),
-    NEMEw_jk_CP = ifelse(pate > NEMEw_jk_95_L & pate < NEMEw_jk_95_H, 1, 0)
-  ) %>%
-  select(
-    colnames(.[grepl("CP",colnames(.))])
-  )
-# generate Power
-power.df <- CI.df %>%   
-  mutate(
-    # IEE
-    IEE_mod_power = ifelse(0 > IEE_mod_95_L & 0 < IEE_mod_95_H, 0, 1),
-    IEE_CR2_power = ifelse(0 > IEE_CR2_95_L & 0 < IEE_CR2_95_H, 0, 1),
-    IEE_jk_power = ifelse(0 > IEE_jk_95_L & 0 < IEE_jk_95_H, 0, 1),
-    # IEEw
-    IEEw_mod_power = ifelse(0 > IEEw_mod_95_L & 0 < IEEw_mod_95_H, 0, 1),
-    IEEw_CR2_power = ifelse(0 > IEEw_CR2_95_L & 0 < IEEw_CR2_95_H, 0, 1),
-    IEEw_jk_power = ifelse(0 > IEEw_jk_95_L & 0 < IEEw_jk_95_H, 0, 1),
-    # FE
-    FE_mod_power = ifelse(0 > FE_mod_95_L & 0 < FE_mod_95_H, 0, 1),
-    FE_CR2_power = ifelse(0 > FE_CR2_95_L & 0 < FE_CR2_95_H, 0, 1),
-    FE_jk_power = ifelse(0 > FE_jk_95_L & 0 < FE_jk_95_H, 0, 1),
-    # FEw
-    FEw_mod_power = ifelse(0 > FEw_mod_95_L & 0 < FEw_mod_95_H, 0, 1),
-    FEw_CR2_power = ifelse(0 > FEw_CR2_95_L & 0 < FEw_CR2_95_H, 0, 1),
-    FEw_jk_power = ifelse(0 > FEw_jk_95_L & 0 < FEw_jk_95_H, 0, 1),
-    # EME
-    EME_mod_power = ifelse(0 > EME_mod_95_L & 0 < EME_mod_95_H, 0, 1),
-    EME_jk_power = ifelse(0 > EME_jk_95_L & 0 < EME_jk_95_H, 0, 1),
-    # EMEw
-    EMEw_mod_power = ifelse(0 > EMEw_mod_95_L & 0 < EMEw_mod_95_H, 0, 1),
-    EMEw_jk_power = ifelse(0 > EMEw_jk_95_L & 0 < EMEw_jk_95_H, 0, 1),
-    # NEME
-    NEME_mod_power = ifelse(0 > NEME_mod_95_L & 0 < NEME_mod_95_H, 0, 1),
-    NEME_jk_power = ifelse(0 > NEME_jk_95_L & 0 < NEME_jk_95_H, 0, 1),
-    # NEMEw
-    NEMEw_mod_power = ifelse(0 > NEMEw_mod_95_L & 0 < NEMEw_mod_95_H, 0, 1),
-    NEMEw_jk_power = ifelse(0 > NEMEw_jk_95_L & 0 < NEMEw_jk_95_H, 0, 1)
-  ) %>%
-  select(
-    colnames(.[grepl("power",colnames(.))])
-  )
-
-# generate RMSE (cATE)
-MSE_cate.df <- (sim.df[grepl("est",colnames(sim.df))] - cate)^2
-MSE_pate.df <- (sim.df[grepl("est",colnames(sim.df))] - pate)^2
-
-# bias results
-results.relbias_cate <- colMeans(relbias_cate.df)
-results.relbias_pate <- colMeans(relbias_pate.df)
-
-# efficiency results
-results.efficiency <- colMeans(efficiency.df)
-
-# CP results
-results.CP_cate <- colMeans(CP_cate.df)
-results.CP_pate <- colMeans(CP_pate.df)
-
-# Power results
-results.power <- colMeans(power.df)
-
-# RMSE results
-results.RMSE_cate <- sqrt(colMeans(MSE_cate.df))
-results.RMSE_pate <- sqrt(colMeans(MSE_pate.df))
-
-
-results.relbias_cate
-results.relbias_pate
-results.efficiency
-results.CP_cate
-results.CP_pate
-results.power
-results.RMSE_cate
-results.RMSE_pate
-
-# check average variance results against MCSE
-
 ```
 
 Results are the same for pATE and cATE since estimands coincide
@@ -1632,9 +1299,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "none")
 # width: 500, height: 300
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_4.tiff"), plot = last_plot(),
-       width=5, height=3, units="in",
-       dpi=800, device='tiff')
 
 # plot CP, precision, power results
 # combine rel bias and RMSE results
@@ -1678,9 +1342,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 400
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_6.tiff"), plot = last_plot(),
-       width=5, height=4, units="in",
-       dpi=800, device='tiff')
 ```
 
 ```{r * Variance plots}
@@ -1713,9 +1374,6 @@ results.variance %>%
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 300
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_5.tiff"), plot = last_plot(),
-       width=5, height=3, units="in",
-       dpi=800, device='tiff')
 ``` 
 
 ```{r * Supplementary Results CR2}
@@ -1741,14 +1399,10 @@ results.variance %>%
   scale_fill_manual(values=c("gray","gray2","gray25","white")) +
   scale_color_manual(values=c("black","black","black","black")) +
   # scale_fill_manual(values = rep(c("green4", "blue4", "purple3", "red2"), each=2) ) +
-  labs(y="Variance", title = "Efficiency", x=NULL, fill="Variance Estimator", color="Variance Estimator") +
+  labs(y="Variance", x=NULL, fill="Variance Estimator", color="Variance Estimator") +
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 300
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_1_Figure_1.tiff"), plot = last_plot(),
-       width=5, height=3, units="in",
-       dpi=800, device='tiff')
-
 
 # plot CP, precision, power results
 # combine rel bias and RMSE results
@@ -1795,9 +1449,6 @@ rbind(
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 400
-ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_1_Figure_2.tiff"), plot = last_plot(),
-       width=5, height=4, units="in",
-       dpi=800, device='tiff')
 ```
 
 Extra exploratory code: Unused.

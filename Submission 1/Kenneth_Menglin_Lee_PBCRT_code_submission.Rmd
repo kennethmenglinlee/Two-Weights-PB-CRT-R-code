@@ -1,0 +1,2171 @@
+---
+title: "PB-CRT code submission"
+output: html_document
+date: "2024-06-04"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Estimand Weights
+```{r * Analyze EMEw weights}
+# EMEw_weight function
+EMEw_weight <- function(K1, K2, rho, P1, Return){
+  w1 <- (1 + (K1-1)*rho)/(1 + (2*K1-1)*rho)
+  w2 <- (1 + (K2-1)*rho)/(1 + (2*K2-1)*rho)
+
+  Ew <- P1*w1 + (1-P1)*w2
+  
+  if(Return=="w1"){
+    return(w1)
+  }else if(Return=="w2"){
+    return(w2)
+  }else if (Return=="all"){
+    return(c(w1, w2, Ew))
+  }else if(Return=="fractions"){
+    return(c(w1/Ew, w2/Ew))
+  }
+}
+
+# generate EMEw data
+library(dplyr)
+library(reshape2)
+
+saves <- c("SizeRatio", "ICC", "P1", "weight1", "weight2", "scaledweight1", "scaledweight2")
+EMEw_data <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(EMEw_data) <- saves
+for(bigk in c(100, 10000)){
+  for(k in c(10, 20, 50)){
+    k1 = k
+    k2 = bigk
+    optimumrho = 1/(1+sqrt(2*k1*k2))
+    
+    optimumw1 = (1 + (k1-1)*optimumrho)/(1 + (2*k1-1)*optimumrho)
+    optimumw2 = (1 + (k2-1)*optimumrho)/(1 + (2*k2-1)*optimumrho)
+    optimumP = sqrt(optimumw2)/(sqrt(optimumw1) + sqrt(optimumw2))
+    
+    
+    for(r in seq(0, 1, by=0.001)){ # rho
+      for(p in c(0.5, 0.9, optimumP)){ # include optimum p
+        EMEw_data <- EMEw_data %>% 
+          add_row(
+            SizeRatio = k1/k2,
+            # SizeRatio = k/1000000,
+            ICC = r,
+            P1 = p,
+            weight1 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="fractions")[1],
+            weight2 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="fractions")[2],
+            
+            scaledweight1 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="w1"),
+            scaledweight2 = EMEw_weight(K1=k1, K2=k2, rho=r, P1=p, Return="w2")
+          )
+      }
+    }
+  }
+}
+# clean up data
+EMEw_data$diffscaledweight = EMEw_data$scaledweight1 - EMEw_data$scaledweight2
+EMEw_data$diffweight = EMEw_data$weight1 - EMEw_data$weight2
+EMEw_data_backup <- EMEw_data
+EMEw_data %>% head()
+
+# melt the data
+EMEw_data <- melt(EMEw_data %>% select(-c(scaledweight1, scaledweight2, diffscaledweight, diffweight)), id.vars = c("SizeRatio", "ICC", "P1"))
+# rename the melted data
+colnames(EMEw_data) <- c("SizeRatio", "ICC", "P1", "weight", "value")
+EMEw_data$P1 <- round(EMEw_data$P1, 2)
+
+# check the data
+head(EMEw_data)
+
+# create maxICC variable
+EMEw_data$maxICC <- ifelse(EMEw_data$SizeRatio %in% c(0.1, 0.2, 0.5), 1/(1+100*sqrt(2*EMEw_data$SizeRatio)), 1/(1+10000*sqrt(2*EMEw_data$SizeRatio)))
+# create categories for P1
+EMEw_data$P1cat <- ifelse(EMEw_data$P1==0.5, 0.5, ifelse(EMEw_data$P1==0.9, 0.9, "Optimal"))
+
+# graph EMEw data
+library(ggplot2)
+library(latex2exp)
+
+
+# [For manuscript]
+EMEw_data %>%
+  filter(SizeRatio %in% c(0.1, 0.2, 0.5)) %>%
+  filter(P1 == 0.5) %>%
+  ggplot(aes(x=ICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(. ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,u}$"), color=NULL) +
+  scale_y_continuous(limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_2.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
+
+# [Appendix]
+EMEw_data %>%
+  ggplot(aes(x=ICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(P1cat ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,u}$"), color=NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(u=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  geom_vline(data  = EMEw_data, aes(xintercept = maxICC), linetype="dashed", color = "gray45") +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 800, height: 500
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_EMEw_estimand_weights.tiff"), plot = last_plot(),
+       width=8, height=5, units="in",
+       dpi=800, device='tiff')
+```
+
+```{r * Analyze NEMEw weights}
+# NEMEw weight function
+NEMEw_weight <- function(K1, K2, wprho, bprho, P1, Return){
+  w1 <- (1 + (K1-1)*wprho)/((1 + (2*K1-1)*wprho)^2 - (K1*bprho)^2)
+  w2 <- (1 + (K2-1)*wprho)/((1 + (2*K2-1)*wprho)^2 - (K2*bprho)^2)
+
+  Ew <- P1*w1 + (1-P1)*w2
+  
+  if(Return=="w1"){
+    return(w1)
+  }else if(Return=="w2"){
+    return(w2)
+  }else if (Return=="all"){
+    return(c(w1, w2, Ew))
+  }else if(Return=="fractions"){
+    return(c(w1/Ew, w2/Ew))
+  }
+}
+
+# generate NEMEw data
+library(dplyr)
+library(reshape2)
+
+cac=0.8
+
+saves <- c("SizeRatio", "wpICC", "CAC", "P1", "weight1", "weight2")
+NEMEw_data <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(NEMEw_data) <- saves
+for(k in c(10, 20, 50)){
+  for(r in seq(0, 1, by=0.01)){ # rho
+    for(p in c(0.5, 0.7, 0.9)){
+      NEMEw_data <- NEMEw_data %>% 
+        add_row(
+          SizeRatio = k/100,
+          wpICC = r,
+          CAC = cac,
+          P1 = p,
+          weight1 = NEMEw_weight(K1=k, K2=100, wprho=r, bprho=r*cac, P1=p, Return="fractions")[1],
+          weight2 = NEMEw_weight(K1=k, K2=100, wprho=r, bprho=r*cac, P1=p, Return="fractions")[2]
+        )
+    }
+  }
+}
+# melt the data
+NEMEw_data <- melt(NEMEw_data, id.vars = c("SizeRatio", "wpICC", "CAC", "P1"))
+# rename the melted data
+colnames(NEMEw_data) <- c("SizeRatio", "wpICC", "CAC", "P1", "weight", "value")
+# check the data
+head(NEMEw_data)
+
+
+# graph NEMEw data
+library(ggplot2)
+library(latex2exp)
+
+# [for manuscript]
+NEMEw_data %>%
+  filter(P1 == 0.5) %>%
+  ggplot(aes(x=wpICC, y=value, group=weight)) +
+  geom_line(aes(color=weight)) +
+  facet_grid(. ~ SizeRatio) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="NEMEw weights (CAC=0.8)", y=TeX("$\\lambda_{NEMEw,u}$"), x="within-period ICC", color=NULL) +
+  scale_y_continuous(limits=c(0,2)) +
+  scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
+  theme_bw() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_3.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
+```
+
+# Simulations
+Simulations with no ICS
+```{r * simulate PB-CRT data (no ICS)}
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+set.seed(1583)
+hetTrtmnt = F
+
+
+# SET PB-CRT design 
+I=10
+J=2 # 2 periods
+
+# SET treatment effect
+trtmnteffectL = 0.35
+trtmnteffectH = 0.35
+
+
+# SET random effect sequences
+ICC = 0.05
+CAC = 0.8 # As defined in Ouyang tau2a/(tau2a + tau2g) 
+sigma2e = 1
+tau2a = ICC*sigma2e/(1-ICC)
+tau2a
+tau2g = tau2a*(1-CAC)/CAC # fixed CAC following the definition in Ouyang
+tau2g
+
+# SET period effects
+period <- 0.2
+
+# generate output dataset
+saves <- c(
+  paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=4), c("_est", "_var", "_var_CR2", "_var_jk")),
+  paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=3), c("_est", "_var", "_var_jk"))
+)
+saves
+sim.df <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(sim.df) <- saves # rename columns
+sim.df
+
+# generate jackknife saves
+saves_jk <- c("cluster_i","IEE", "IEEw", "FE", "FEw","EME", "EMEw", "NEME", "NEMEw")
+
+# generate n_sims
+n_sims <- 1000
+
+ptm <- proc.time()
+for(n in 1:n_sims){
+  
+  ####### generate cluster:period cell means data ####### 
+  
+  # generate alpha
+  I
+  alpha <- rnorm(n=I, mean=0, sd=sqrt(tau2a))
+  alpha
+  alpha.mat <- matrix(rep(alpha, J), nrow=I, ncol=J)
+  alpha.mat
+  # generate gamma
+  gamma <- rnorm(n=I*J, mean=0, sd=sqrt(tau2g))
+  gamma.mat <- matrix(gamma, nrow=I, ncol=J)
+  gamma.mat
+  
+  # generate period effects
+  period.mat <- matrix(c(rep(1, I), rep(1+period, I)), nrow=I, ncol=J)
+  period.mat
+  
+  # randomly generate random treatment
+  trtmnteffect.mat <- matrix(
+    rep(c(rep(trtmnteffectL,I/2), rep(trtmnteffectH,I/2)), J),
+    nrow=I,
+    ncol=J
+  )
+  trtmnteffect.mat
+  subpopulation.mat <- ifelse(trtmnteffect.mat==trtmnteffectL,"L", ifelse(trtmnteffect.mat==trtmnteffectH,"H",0))
+  subpopulation.mat
+  
+  # randomly select clusters that will receive intervention 
+  z <- sample(c(rep(0,I/2),rep(1,I/2)), I)
+  z <- c(rep(0,I), z)
+  z
+  z.mat <- matrix(z, nrow=I, ncol=J) # add baseline and make into matrix
+  z.mat
+  # check
+  c(z.mat) == z
+  
+  # generate outcomes matrix
+  ztrtmnt.mat <- z.mat * trtmnteffect.mat
+  ztrtmnt.mat
+  
+  # sum up everything
+  alpha.mat
+  gamma.mat
+  period.mat
+  ztrtmnt.mat
+  outcomes.mat <- alpha.mat + gamma.mat + period.mat + ztrtmnt.mat
+  outcomes.mat
+  
+  # generate df
+  means.df <- data.frame(
+    cluster = rep(1:I, 2),
+    period = rep(c(0,1), each=I),
+    z = c(z.mat),
+    avgoutcomes = c(outcomes.mat),
+    subpopulation = c(subpopulation.mat)
+  )
+  means.df
+  
+  
+  # generate different cluster:period sizes
+  n_cpL <- rpois(I/2, 20) # variable cluster sizes and equal cp sizes
+  n_cpH <- rpois(I/2, 100) # variable cluster sizes and equal cp sizes
+  n_cpL
+  n_cpH
+  n_cp <- c(n_cpL, n_cpH)
+  n_cp2 <- rep(n_cp, 2)
+  table(n_cp2, c(subpopulation.mat)) # check
+  
+  # replicate cluster:period mean entries by corresponding cluster size
+  means.df
+    means.df$Freq <- n_cp2
+  pb.df2 <- as.data.frame(lapply(means.df, rep, n_cp2))
+  pb.df2
+  
+  # generate outcomes 
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
+  
+  # # create weighted df
+  pb.df2weighted <- pb.df2
+  pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+  
+  # prepare df for analysis
+  pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
+  # pb.df2$period <- as.factor(pb.df2$period)
+  pb.df2weighted$intervention <- pb.df2weighted$z
+  
+  # analyses
+  IEE <- lm(outcome ~ intervention + period-1, data = pb.df2weighted)
+  
+  IEEw <- lm(outcome ~ intervention + period-1, data = pb.df2weighted, weights = pb.df2weighted$W1)
+  
+  FE <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted)
+
+  FEw <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+
+  EME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.df2weighted)
+
+  EMEw <- mix(outcome ~ intervention + period-1 + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+
+  NEME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
+
+  # outputs an error?
+  NEMEw <- mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+
+  # Jackknife
+  jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+  names(jk.df) <- saves_jk
+  jk.df
+  for(i in levels(pb.df2weighted$cluster)){
+    jk.dat <- pb.df2weighted %>% filter(cluster!=i)
+    
+    jk.df <- jk.df %>%
+      add_row(
+        cluster_i=as.numeric(i),
+        IEE = summary(lm(outcome ~ intervention + period-1, data = jk.dat))$coef[,"Estimate"]["intervention"],
+        IEEw = summary(lm(outcome ~ intervention + period-1, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+        FE = summary(lm(outcome ~ intervention + period-1 + cluster, data = jk.dat))$coef[,"Estimate"]["intervention"],
+        FEw = summary(lm(outcome ~ intervention + period-1 + cluster, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+        EME = summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = jk.dat))$coef[,"Estimate"]["intervention"],
+        EMEw = summary(mix(outcome ~ intervention + period-1 + (1|cluster), data=jk.dat, weights=c("W1", "W1")))$coef[,"Estimate"]["intervention"],
+        NEME = summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data = jk.dat))$coef[,"Estimate"]["intervention"],
+        NEMEw = summary(mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=jk.dat, weights=c("W1", "W1", "W1")))$coef[,"Estimate"]["intervention"]
+      )
+    print(paste0(nrow(sim.df),".",i))
+  }
+  jk.df
+
+  sim.df <- sim.df %>% 
+    add_row(
+      IEE_est = summary(IEE)$coef[,"Estimate"]["intervention"],
+      IEE_var = summary(IEE)$coef[,"Std. Error"]["intervention"]^2,
+      IEE_var_CR2 = clubSandwich::vcovCR(IEE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      IEE_var_jk = sum((jk.df$IEE-summary(IEE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      IEEw_est = summary(IEEw)$coef[,"Estimate"]["intervention"],
+      IEEw_var = summary(IEEw)$coef[,"Std. Error"]["intervention"]^2,
+      IEEw_var_CR2 = clubSandwich::vcovCR(IEEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      IEEw_var_jk = sum((jk.df$IEEw-summary(IEEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FE_est = summary(FE)$coef[,"Estimate"]["intervention"],
+      FE_var = summary(FE)$coef[,"Std. Error"]["intervention"]^2,
+      FE_var_CR2 = clubSandwich::vcovCR(FE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      FE_var_jk = sum((jk.df$FE-summary(FE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FEw_est = summary(FEw)$coef[,"Estimate"]["intervention"],
+      FEw_var = summary(FEw)$coef[,"Std. Error"]["intervention"]^2,
+      FEw_var_CR2 = clubSandwich::vcovCR(FEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      FEw_var_jk = sum((jk.df$FEw-summary(FEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      EME_est = summary(EME)$coef[,"Estimate"]["intervention"],
+      EME_var = summary(EME)$coef[,"Std. Error"]["intervention"]^2,
+      EME_var_jk = sum((jk.df$EME-summary(EME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      EMEw_est = summary(EMEw)$coef[,"Estimate"]["intervention"],
+      EMEw_var = summary(EMEw)$coef[,"Std. Error"]["intervention"]^2 ,
+      EMEw_var_jk = sum((jk.df$EMEw-summary(EMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEME_est = summary(NEME)$coef[,"Estimate"]["intervention"],
+      NEME_var = summary(NEME)$coef[,"Std. Error"]["intervention"]^2,
+      NEME_var_jk = sum((jk.df$NEME-summary(NEME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEMEw_est = summary(NEMEw)$coef[,"Estimate"]["intervention"],
+      NEMEw_var = summary(NEMEw)$coef[,"Std. Error"]["intervention"]^2,
+      NEMEw_var_jk = sum((jk.df$NEMEw-summary(NEMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df))
+    )
+  
+  print(nrow(sim.df))
+}
+etm <- proc.time()-ptm 
+etm
+
+write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",CAC,"CAC_",ICC,"ICC",".csv"))
+```
+
+```{r * clean analysis df w/o informative cluster sizes}
+library(dplyr)
+
+n_sims = 1000
+
+ICS=F
+
+sim.df <- read.csv("results_1000sim_FALSEhettrtmnt_0.8CAC_0.05ICC.csv")
+pate <- (1*0.35 + 5*0.35)/(6)
+cate <- (0.35+0.35)/2
+
+head(sim.df)
+colnames(sim.df)
+nrow(sim.df)
+
+# generate Bias (cATE)
+bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cate
+relbias_cate.df <- (bias_cate.df/cate)*100
+# generate Bias (pATE)
+bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pate
+relbias_pate.df <- (bias_pate.df/pate)*100
+
+# efficiency [5/24/2024]
+efficiency.df <- sim.df %>%
+  select(
+    colnames(.[grepl("var",colnames(.))])
+  )
+
+# generate CI
+sim.df[grepl("est",colnames(sim.df))]
+CI.df <- sim.df %>%
+  mutate(
+    # IEE
+    IEE_mod_95_H = IEE_est + 1.96*sqrt(IEE_var),
+    IEE_mod_95_L = IEE_est - 1.96*sqrt(IEE_var),
+    IEE_CR2_95_H = IEE_est + 1.96*sqrt(IEE_var_CR2),
+    IEE_CR2_95_L = IEE_est - 1.96*sqrt(IEE_var_CR2),
+    IEE_jk_95_H = IEE_est + 1.96*sqrt(IEE_var_jk),
+    IEE_jk_95_L = IEE_est - 1.96*sqrt(IEE_var_jk),
+    # IEEw
+    IEEw_mod_95_H = IEEw_est + 1.96*sqrt(IEEw_var),
+    IEEw_mod_95_L = IEEw_est - 1.96*sqrt(IEEw_var),
+    IEEw_CR2_95_H = IEEw_est + 1.96*sqrt(IEEw_var_CR2),
+    IEEw_CR2_95_L = IEEw_est - 1.96*sqrt(IEEw_var_CR2),
+    IEEw_jk_95_H = IEEw_est + 1.96*sqrt(IEEw_var_jk),
+    IEEw_jk_95_L = IEEw_est - 1.96*sqrt(IEEw_var_jk),
+    # FE
+    FE_mod_95_H = FE_est + 1.96*sqrt(FE_var),
+    FE_mod_95_L = FE_est - 1.96*sqrt(FE_var),
+    FE_CR2_95_H = FE_est + 1.96*sqrt(FE_var_CR2),
+    FE_CR2_95_L = FE_est - 1.96*sqrt(FE_var_CR2),
+    FE_jk_95_H = FE_est + 1.96*sqrt(FE_var_jk),
+    FE_jk_95_L = FE_est - 1.96*sqrt(FE_var_jk),
+    # FEw
+    FEw_mod_95_H = FEw_est + 1.96*sqrt(FEw_var),
+    FEw_mod_95_L = FEw_est - 1.96*sqrt(FEw_var),
+    FEw_CR2_95_H = FEw_est + 1.96*sqrt(FEw_var_CR2),
+    FEw_CR2_95_L = FEw_est - 1.96*sqrt(FEw_var_CR2),
+    FEw_jk_95_H = FEw_est + 1.96*sqrt(FEw_var_jk),
+    FEw_jk_95_L = FEw_est - 1.96*sqrt(FEw_var_jk),
+    # EME
+    EME_mod_95_H = EME_est + 1.96*sqrt(EME_var),
+    EME_mod_95_L = EME_est - 1.96*sqrt(EME_var),
+    EME_jk_95_H = EME_est + 1.96*sqrt(EME_var_jk),
+    EME_jk_95_L = EME_est - 1.96*sqrt(EME_var_jk),
+    # EMEw
+    EMEw_mod_95_H = EMEw_est + 1.96*sqrt(EMEw_var),
+    EMEw_mod_95_L = EMEw_est - 1.96*sqrt(EMEw_var),
+    EMEw_jk_95_H = EMEw_est + 1.96*sqrt(EMEw_var_jk),
+    EMEw_jk_95_L = EMEw_est - 1.96*sqrt(EMEw_var_jk),
+    # NEME
+    NEME_mod_95_H = NEME_est + 1.96*sqrt(NEME_var),
+    NEME_mod_95_L = NEME_est - 1.96*sqrt(NEME_var),
+    NEME_jk_95_H = NEME_est + 1.96*sqrt(NEME_var_jk),
+    NEME_jk_95_L = NEME_est - 1.96*sqrt(NEME_var_jk),
+    # NEMEw
+    NEMEw_mod_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var),
+    NEMEw_mod_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var),
+    NEMEw_jk_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var_jk),
+    NEMEw_jk_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var_jk),
+    ) %>%
+  select(
+    colnames(.[grepl("95",colnames(.))])
+  )
+
+# generate CP (cATE)
+CP_cate.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_CP = ifelse(cate > IEE_mod_95_L & cate < IEE_mod_95_H, 1, 0),
+    IEE_CR2_CP = ifelse(cate > IEE_CR2_95_L & cate < IEE_CR2_95_H, 1, 0),
+    IEE_jk_CP = ifelse(cate > IEE_jk_95_L & cate < IEE_jk_95_H, 1, 0),
+    # IEEw
+    IEEw_mod_CP = ifelse(cate > IEEw_mod_95_L & cate < IEEw_mod_95_H, 1, 0),
+    IEEw_CR2_CP = ifelse(cate > IEEw_CR2_95_L & cate < IEEw_CR2_95_H, 1, 0),
+    IEEw_jk_CP = ifelse(cate > IEEw_jk_95_L & cate < IEEw_jk_95_H, 1, 0),
+    # FE
+    FE_mod_CP = ifelse(cate > FE_mod_95_L & cate < FE_mod_95_H, 1, 0),
+    FE_CR2_CP = ifelse(cate > FE_CR2_95_L & cate < FE_CR2_95_H, 1, 0),
+    FE_jk_CP = ifelse(cate > FE_jk_95_L & cate < FE_jk_95_H, 1, 0),
+    # FEw
+    FEw_mod_CP = ifelse(cate > FEw_mod_95_L & cate < FEw_mod_95_H, 1, 0),
+    FEw_CR2_CP = ifelse(cate > FEw_CR2_95_L & cate < FEw_CR2_95_H, 1, 0),
+    FEw_jk_CP = ifelse(cate > FEw_jk_95_L & cate < FEw_jk_95_H, 1, 0),
+    # EME
+    EME_mod_CP = ifelse(cate > EME_mod_95_L & cate < EME_mod_95_H, 1, 0),
+    EME_jk_CP = ifelse(cate > EME_jk_95_L & cate < EME_jk_95_H, 1, 0),
+    # EMEw
+    EMEw_mod_CP = ifelse(cate > EMEw_mod_95_L & cate < EMEw_mod_95_H, 1, 0),
+    EMEw_jk_CP = ifelse(cate > EMEw_jk_95_L & cate < EMEw_jk_95_H, 1, 0),
+    # NEME
+    NEME_mod_CP = ifelse(cate > NEME_mod_95_L & cate < NEME_mod_95_H, 1, 0),
+    NEME_jk_CP = ifelse(cate > NEME_jk_95_L & cate < NEME_jk_95_H, 1, 0),
+    # NEMEw
+    NEMEw_mod_CP = ifelse(cate > NEMEw_mod_95_L & cate < NEMEw_mod_95_H, 1, 0),
+    NEMEw_jk_CP = ifelse(cate > NEMEw_jk_95_L & cate < NEMEw_jk_95_H, 1, 0)
+  ) %>%
+  select(
+    colnames(.[grepl("CP",colnames(.))])
+  )
+
+# generate CP (pATE)
+CP_pate.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_CP = ifelse(pate > IEE_mod_95_L & pate < IEE_mod_95_H, 1, 0),
+    IEE_CR2_CP = ifelse(pate > IEE_CR2_95_L & pate < IEE_CR2_95_H, 1, 0),
+    IEE_jk_CP = ifelse(pate > IEE_jk_95_L & pate < IEE_jk_95_H, 1, 0),
+    # IEEw
+    IEEw_mod_CP = ifelse(pate > IEEw_mod_95_L & pate < IEEw_mod_95_H, 1, 0),
+    IEEw_CR2_CP = ifelse(pate > IEEw_CR2_95_L & pate < IEEw_CR2_95_H, 1, 0),
+    IEEw_jk_CP = ifelse(pate > IEEw_jk_95_L & pate < IEEw_jk_95_H, 1, 0),
+    # FE
+    FE_mod_CP = ifelse(pate > FE_mod_95_L & pate < FE_mod_95_H, 1, 0),
+    FE_CR2_CP = ifelse(pate > FE_CR2_95_L & pate < FE_CR2_95_H, 1, 0),
+    FE_jk_CP = ifelse(pate > FE_jk_95_L & pate < FE_jk_95_H, 1, 0),
+    # FEw
+    FEw_mod_CP = ifelse(pate > FEw_mod_95_L & pate < FEw_mod_95_H, 1, 0),
+    FEw_CR2_CP = ifelse(pate > FEw_CR2_95_L & pate < FEw_CR2_95_H, 1, 0),
+    FEw_jk_CP = ifelse(pate > FEw_jk_95_L & pate < FEw_jk_95_H, 1, 0),
+    # EME
+    EME_mod_CP = ifelse(pate > EME_mod_95_L & pate < EME_mod_95_H, 1, 0),
+    EME_jk_CP = ifelse(pate > EME_jk_95_L & pate < EME_jk_95_H, 1, 0),
+    # EMEw
+    EMEw_mod_CP = ifelse(pate > EMEw_mod_95_L & pate < EMEw_mod_95_H, 1, 0),
+    EMEw_jk_CP = ifelse(pate > EMEw_jk_95_L & pate < EMEw_jk_95_H, 1, 0),
+    # NEME
+    NEME_mod_CP = ifelse(pate > NEME_mod_95_L & pate < NEME_mod_95_H, 1, 0),
+    NEME_jk_CP = ifelse(pate > NEME_jk_95_L & pate < NEME_jk_95_H, 1, 0),
+    # NEMEw
+    NEMEw_mod_CP = ifelse(pate > NEMEw_mod_95_L & pate < NEMEw_mod_95_H, 1, 0),
+    NEMEw_jk_CP = ifelse(pate > NEMEw_jk_95_L & pate < NEMEw_jk_95_H, 1, 0)
+  ) %>%
+  select(
+    colnames(.[grepl("CP",colnames(.))])
+  )
+# generate Power
+power.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_power = ifelse(0 > IEE_mod_95_L & 0 < IEE_mod_95_H, 0, 1),
+    IEE_CR2_power = ifelse(0 > IEE_CR2_95_L & 0 < IEE_CR2_95_H, 0, 1),
+    IEE_jk_power = ifelse(0 > IEE_jk_95_L & 0 < IEE_jk_95_H, 0, 1),
+    # IEEw
+    IEEw_mod_power = ifelse(0 > IEEw_mod_95_L & 0 < IEEw_mod_95_H, 0, 1),
+    IEEw_CR2_power = ifelse(0 > IEEw_CR2_95_L & 0 < IEEw_CR2_95_H, 0, 1),
+    IEEw_jk_power = ifelse(0 > IEEw_jk_95_L & 0 < IEEw_jk_95_H, 0, 1),
+    # FE
+    FE_mod_power = ifelse(0 > FE_mod_95_L & 0 < FE_mod_95_H, 0, 1),
+    FE_CR2_power = ifelse(0 > FE_CR2_95_L & 0 < FE_CR2_95_H, 0, 1),
+    FE_jk_power = ifelse(0 > FE_jk_95_L & 0 < FE_jk_95_H, 0, 1),
+    # FEw
+    FEw_mod_power = ifelse(0 > FEw_mod_95_L & 0 < FEw_mod_95_H, 0, 1),
+    FEw_CR2_power = ifelse(0 > FEw_CR2_95_L & 0 < FEw_CR2_95_H, 0, 1),
+    FEw_jk_power = ifelse(0 > FEw_jk_95_L & 0 < FEw_jk_95_H, 0, 1),
+    # EME
+    EME_mod_power = ifelse(0 > EME_mod_95_L & 0 < EME_mod_95_H, 0, 1),
+    EME_jk_power = ifelse(0 > EME_jk_95_L & 0 < EME_jk_95_H, 0, 1),
+    # EMEw
+    EMEw_mod_power = ifelse(0 > EMEw_mod_95_L & 0 < EMEw_mod_95_H, 0, 1),
+    EMEw_jk_power = ifelse(0 > EMEw_jk_95_L & 0 < EMEw_jk_95_H, 0, 1),
+    # NEME
+    NEME_mod_power = ifelse(0 > NEME_mod_95_L & 0 < NEME_mod_95_H, 0, 1),
+    NEME_jk_power = ifelse(0 > NEME_jk_95_L & 0 < NEME_jk_95_H, 0, 1),
+    # NEMEw
+    NEMEw_mod_power = ifelse(0 > NEMEw_mod_95_L & 0 < NEMEw_mod_95_H, 0, 1),
+    NEMEw_jk_power = ifelse(0 > NEMEw_jk_95_L & 0 < NEMEw_jk_95_H, 0, 1)
+  ) %>%
+  select(
+    colnames(.[grepl("power",colnames(.))])
+  )
+
+# generate RMSE (cATE)
+MSE_cate.df <- (sim.df[grepl("est",colnames(sim.df))] - cate)^2
+MSE_pate.df <- (sim.df[grepl("est",colnames(sim.df))] - pate)^2
+
+# bias results
+results.relbias_cate <- colMeans(relbias_cate.df)
+results.relbias_pate <- colMeans(relbias_pate.df)
+
+# efficiency results
+results.efficiency <- colMeans(efficiency.df)
+# variance results
+colMeans(sim.df[grepl("var",colnames(sim.df))])
+results.MCSE <- sapply(sim.df[grepl("est",colnames(sim.df))], var)
+names(results.MCSE) <- paste0(names(results.MCSE),"_var_MC")
+results.variance <- c(results.MCSE, colMeans(sim.df[grepl("var",colnames(sim.df))])) %>% reshape2::melt()
+
+# CP results
+results.CP_cate <- colMeans(CP_cate.df)
+results.CP_pate <- colMeans(CP_pate.df)
+
+# Power results
+results.power <- colMeans(power.df)
+
+# RMSE results
+results.RMSE_cate <- sqrt(colMeans(MSE_cate.df))
+results.RMSE_pate <- sqrt(colMeans(MSE_pate.df))
+
+results.relbias_cate
+results.relbias_pate
+results.efficiency
+results.CP_cate
+results.CP_pate
+results.power
+results.RMSE_cate
+results.RMSE_pate
+
+# check average variance results against MCSE
+
+```
+
+```{r * Plot (no ICS) results}
+library(ggplot2)
+
+# plot relative bias and RMSE results
+# combine rel bias and RMSE results
+rbind(
+  results.relbias_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+  ,
+  results.RMSE_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)),
+      result = "RMSE",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+) %>%
+  # factor
+  mutate(analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw"))) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
+  geom_bar(stat = "identity") +
+  facet_grid(result~weighted, scales="free") +
+    geom_hline(data = data.frame(result = c("Relative Bias (%)","Relative Bias (%)", "RMSE"), hline = c(5, -5, NA)), aes(yintercept = hline), linetype = "dashed") +
+  labs(y=NULL, x=NULL, title = "Relative Bias & RMSE") +
+  theme_bw() +
+  theme(legend.position = "none")
+# width: 500, height: 300
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_4.tiff"), plot = last_plot(),
+       width=5, height=3, units="in",
+       dpi=800, device='tiff')
+
+results.variance %>% 
+  mutate(
+    analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+    varianceestimator = sub(".+_(.+)","\\1", rownames(results.variance)),
+    weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+  ) %>%
+  filter(varianceestimator != "CR2") %>%
+  mutate(varianceestimator = ifelse(varianceestimator=="var", "Model", ifelse(varianceestimator=="jk", "Jackknife", "Monte Carlo"))) %>%
+  mutate(
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife","Monte Carlo")),
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw"))
+  ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(~weighted, scales="free_x") +
+  scale_fill_manual(values=c("gray","gray2","white")) +
+  scale_color_manual(values=c("black","black","black")) +
+  labs(y="Variance", x=NULL, title="Efficiency", fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 300
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_5.tiff"), plot = last_plot(),
+       width=5, height=3, units="in",
+       dpi=800, device='tiff')
+
+# plot CP, precision, power results
+# combine rel bias and RMSE results
+rbind(
+  results.CP_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "CP",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+  ,
+  results.power %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "Power",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+) %>%
+  filter(varianceestimator != "CR2") %>% # remove CR2 variance estimators
+  mutate(varianceestimator = ifelse(varianceestimator=="mod","Model","Jackknife")) %>% # rename variance estimator levels
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    # analysis = factor(analysis, levels=c("IEE","IEEw","FE","FEw","EME","EMEw","NEME","NEMEw")),
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife"))
+    ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(result~weighted, scales="free_x") +
+  geom_hline(data = data.frame(result = c("CP", "Power"), hline = c(0.95, NA)), aes(yintercept = hline), linetype = "dashed") +
+  scale_fill_manual(values=c("gray","gray2")) +
+    scale_color_manual(values=c("black","black")) +
+  labs(y=NULL, x=NULL, title = "Coverage Probability & Power", fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 400
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_6.tiff"), plot = last_plot(),
+       width=5, height=4, units="in",
+       dpi=800, device='tiff')
+```
+
+Simulations with ICS
+```{r * simulate PB-CRT data (ICS)}
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+set.seed(2525)
+hetTrtmnt = T
+
+# SET PB-CRT design 
+I=10
+J=2 # 2 periods
+
+# SET treatment effect
+trtmnteffectL = 0.2
+trtmnteffectH = 0.5
+
+# SET random effect sequences
+ICC = 0.05
+CAC = 0.8 # As defined in Ouyang tau2a/(tau2a + tau2g) 
+sigma2e = 1
+tau2a = ICC*sigma2e/(1-ICC)
+tau2a
+tau2g = tau2a*(1-CAC)/CAC # fixed CAC following the definition in Ouyang
+tau2g
+
+# SET period effects
+period <- 0.2
+
+# generate output dataset
+saves <- c(
+  paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=4), c("_est", "_var", "_var_CR2", "_var_jk")),
+  paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=3), c("_est", "_var", "_var_jk"))
+)
+saves
+sim.df <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(sim.df) <- saves # rename columns
+sim.df
+
+# generate jackknife saves
+saves_jk <- c("cluster_i","IEE", "IEEw", "FE", "FEw","EME", "EMEw", "NEME", "NEMEw")
+
+# generate n_sims
+n_sims <- 1000
+
+ptm <- proc.time()
+for(n in 1:n_sims){
+  
+  ####### generate cluster:period cell means data ####### 
+  
+  # generate alpha
+  I
+  alpha <- rnorm(n=I, mean=0, sd=sqrt(tau2a))
+  alpha
+  alpha.mat <- matrix(rep(alpha, J), nrow=I, ncol=J)
+  alpha.mat
+  # generate gamma
+  gamma <- rnorm(n=I*J, mean=0, sd=sqrt(tau2g))
+  gamma.mat <- matrix(gamma, nrow=I, ncol=J)
+  gamma.mat
+  
+  # generate period effects
+  period.mat <- matrix(c(rep(1, I), rep(1+period, I)), nrow=I, ncol=J)
+  period.mat
+  
+  # randomly generate random treatment
+  trtmnteffect.mat <- matrix(
+    rep(c(rep(trtmnteffectL,I/2), rep(trtmnteffectH,I/2)), J),
+    nrow=I,
+    ncol=J
+  )
+  trtmnteffect.mat
+  subpopulation.mat <- ifelse(trtmnteffect.mat==trtmnteffectL,"L", ifelse(trtmnteffect.mat==trtmnteffectH,"H",0))
+  subpopulation.mat
+  
+  # randomly select clusters that will receive intervention 
+  z <- sample(c(rep(0,I/2),rep(1,I/2)), I)
+  z <- c(rep(0,I), z)
+  z
+  z.mat <- matrix(z, nrow=I, ncol=J) # add baseline and make into matrix
+  z.mat
+  # check
+  c(z.mat) == z
+  
+  # generate outcomes matrix
+  ztrtmnt.mat <- z.mat * trtmnteffect.mat
+  ztrtmnt.mat
+  
+  # sum up everything
+  alpha.mat
+  gamma.mat
+  period.mat
+  ztrtmnt.mat
+  outcomes.mat <- alpha.mat + gamma.mat + period.mat + ztrtmnt.mat
+  outcomes.mat
+  
+  # generate df
+  means.df <- data.frame(
+    cluster = rep(1:I, 2),
+    period = rep(c(0,1), each=I),
+    z = c(z.mat),
+    avgoutcomes = c(outcomes.mat),
+    subpopulation = c(subpopulation.mat)
+  )
+  means.df
+  
+  
+  # generate different cluster:period sizes
+  n_cpL <- rpois(I/2, 20) # variable cluster sizes and equal cp sizes
+  n_cpH <- rpois(I/2, 100) # variable cluster sizes and equal cp sizes
+  n_cpL
+  n_cpH
+  n_cp <- c(n_cpL, n_cpH)
+  n_cp2 <- rep(n_cp, 2)
+  table(n_cp2, c(subpopulation.mat)) # check
+  
+  # replicate cluster:period mean entries by corresponding cluster size
+  means.df
+    means.df$Freq <- n_cp2
+  pb.df2 <- as.data.frame(lapply(means.df, rep, n_cp2))
+  pb.df2
+  
+  # generate outcomes 
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
+  
+  # # create weighted df
+  pb.df2weighted <- pb.df2
+  pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+  
+  # prepare df for analysis
+  pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
+  # pb.df2$period <- as.factor(pb.df2$period)
+  pb.df2weighted$intervention <- pb.df2weighted$z
+  
+  # analyses
+  IEE <- lm(outcome ~ intervention + period-1, data = pb.df2weighted)
+  
+  IEEw <- lm(outcome ~ intervention + period-1, data = pb.df2weighted, weights = pb.df2weighted$W1)
+  
+  FE <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted)
+
+  FEw <- lm(outcome ~ intervention + period-1 + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+
+  EME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = pb.df2weighted)
+
+  EMEw <- mix(outcome ~ intervention + period-1 + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+
+  NEME <- lme4::lmer(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
+
+  # outputs an error?
+  NEMEw <- mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+
+  # Jackknife
+  jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+  names(jk.df) <- saves_jk
+  jk.df
+  for(i in levels(pb.df2weighted$cluster)){
+    jk.dat <- pb.df2weighted %>% filter(cluster!=i)
+    
+    jk.df <- jk.df %>%
+      add_row(
+        cluster_i=as.numeric(i),
+        IEE = summary(lm(outcome ~ intervention + period-1, data = jk.dat))$coef[,"Estimate"]["intervention"],
+        IEEw = summary(lm(outcome ~ intervention + period-1, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+        FE = summary(lm(outcome ~ intervention + period-1 + cluster, data = jk.dat))$coef[,"Estimate"]["intervention"],
+        FEw = summary(lm(outcome ~ intervention + period-1 + cluster, data = jk.dat, weights = jk.dat$W1))$coef[,"Estimate"]["intervention"],
+        EME = summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster), data = jk.dat))$coef[,"Estimate"]["intervention"],
+        EMEw = summary(mix(outcome ~ intervention + period-1 + (1|cluster), data=jk.dat, weights=c("W1", "W1")))$coef[,"Estimate"]["intervention"],
+        NEME = summary(lme4::lmer(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data = jk.dat))$coef[,"Estimate"]["intervention"],
+        NEMEw = summary(mix(outcome ~ intervention + period-1 + (1|cluster) + (1|cluster:period), data=jk.dat, weights=c("W1", "W1", "W1")))$coef[,"Estimate"]["intervention"]
+      )
+    print(paste0(nrow(sim.df),".",i))
+  }
+  jk.df
+
+  sim.df <- sim.df %>% 
+    add_row(
+      IEE_est = summary(IEE)$coef[,"Estimate"]["intervention"],
+      IEE_var = summary(IEE)$coef[,"Std. Error"]["intervention"]^2,
+      IEE_var_CR2 = clubSandwich::vcovCR(IEE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      IEE_var_jk = sum((jk.df$IEE-summary(IEE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      IEEw_est = summary(IEEw)$coef[,"Estimate"]["intervention"],
+      IEEw_var = summary(IEEw)$coef[,"Std. Error"]["intervention"]^2,
+      IEEw_var_CR2 = clubSandwich::vcovCR(IEEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      IEEw_var_jk = sum((jk.df$IEEw-summary(IEEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FE_est = summary(FE)$coef[,"Estimate"]["intervention"],
+      FE_var = summary(FE)$coef[,"Std. Error"]["intervention"]^2,
+      FE_var_CR2 = clubSandwich::vcovCR(FE, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      FE_var_jk = sum((jk.df$FE-summary(FE)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      FEw_est = summary(FEw)$coef[,"Estimate"]["intervention"],
+      FEw_var = summary(FEw)$coef[,"Std. Error"]["intervention"]^2,
+      FEw_var_CR2 = clubSandwich::vcovCR(FEw, cluster = pb.df2weighted$cluster, type = "CR2")["intervention","intervention"],
+      FEw_var_jk = sum((jk.df$FEw-summary(FEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      EME_est = summary(EME)$coef[,"Estimate"]["intervention"],
+      EME_var = summary(EME)$coef[,"Std. Error"]["intervention"]^2,
+      EME_var_jk = sum((jk.df$EME-summary(EME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      EMEw_est = summary(EMEw)$coef[,"Estimate"]["intervention"],
+      EMEw_var = summary(EMEw)$coef[,"Std. Error"]["intervention"]^2 ,
+      EMEw_var_jk = sum((jk.df$EMEw-summary(EMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEME_est = summary(NEME)$coef[,"Estimate"]["intervention"],
+      NEME_var = summary(NEME)$coef[,"Std. Error"]["intervention"]^2,
+      NEME_var_jk = sum((jk.df$NEME-summary(NEME)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df)),
+      
+      NEMEw_est = summary(NEMEw)$coef[,"Estimate"]["intervention"],
+      NEMEw_var = summary(NEMEw)$coef[,"Std. Error"]["intervention"]^2,
+      NEMEw_var_jk = sum((jk.df$NEMEw-summary(NEMEw)$coef[,"Estimate"]["intervention"])^2)*(nrow(jk.df)-1)/(nrow(jk.df))
+    )
+  
+  print(nrow(sim.df))
+}
+etm <- proc.time()-ptm 
+etm
+
+write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",CAC,"CAC_",ICC,"ICC",".csv"))
+```
+
+```{r * clean analysis df w/ informative cluster sizes}
+library(dplyr)
+
+n_sims = 1000
+
+ICS=T
+
+sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_0.8CAC_0.05ICC.csv")
+pate <- (1*0.2 + 5*0.5)/(6)
+cate <- (0.2+0.5)/2
+
+head(sim.df)
+colnames(sim.df)
+nrow(sim.df)
+
+# generate Bias (cATE)
+bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cate
+relbias_cate.df <- (bias_cate.df/cate)*100
+# generate Bias (pATE)
+bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pate
+relbias_pate.df <- (bias_pate.df/pate)*100
+
+# efficiency [5/24/2024]
+efficiency.df <- sim.df %>%
+  select(
+    colnames(.[grepl("var",colnames(.))])
+  )
+
+# generate CI
+sim.df[grepl("est",colnames(sim.df))]
+CI.df <- sim.df %>%
+  mutate(
+    # IEE
+    IEE_mod_95_H = IEE_est + 1.96*sqrt(IEE_var),
+    IEE_mod_95_L = IEE_est - 1.96*sqrt(IEE_var),
+    IEE_CR2_95_H = IEE_est + 1.96*sqrt(IEE_var_CR2),
+    IEE_CR2_95_L = IEE_est - 1.96*sqrt(IEE_var_CR2),
+    IEE_jk_95_H = IEE_est + 1.96*sqrt(IEE_var_jk),
+    IEE_jk_95_L = IEE_est - 1.96*sqrt(IEE_var_jk),
+    # IEEw
+    IEEw_mod_95_H = IEEw_est + 1.96*sqrt(IEEw_var),
+    IEEw_mod_95_L = IEEw_est - 1.96*sqrt(IEEw_var),
+    IEEw_CR2_95_H = IEEw_est + 1.96*sqrt(IEEw_var_CR2),
+    IEEw_CR2_95_L = IEEw_est - 1.96*sqrt(IEEw_var_CR2),
+    IEEw_jk_95_H = IEEw_est + 1.96*sqrt(IEEw_var_jk),
+    IEEw_jk_95_L = IEEw_est - 1.96*sqrt(IEEw_var_jk),
+    # FE
+    FE_mod_95_H = FE_est + 1.96*sqrt(FE_var),
+    FE_mod_95_L = FE_est - 1.96*sqrt(FE_var),
+    FE_CR2_95_H = FE_est + 1.96*sqrt(FE_var_CR2),
+    FE_CR2_95_L = FE_est - 1.96*sqrt(FE_var_CR2),
+    FE_jk_95_H = FE_est + 1.96*sqrt(FE_var_jk),
+    FE_jk_95_L = FE_est - 1.96*sqrt(FE_var_jk),
+    # FEw
+    FEw_mod_95_H = FEw_est + 1.96*sqrt(FEw_var),
+    FEw_mod_95_L = FEw_est - 1.96*sqrt(FEw_var),
+    FEw_CR2_95_H = FEw_est + 1.96*sqrt(FEw_var_CR2),
+    FEw_CR2_95_L = FEw_est - 1.96*sqrt(FEw_var_CR2),
+    FEw_jk_95_H = FEw_est + 1.96*sqrt(FEw_var_jk),
+    FEw_jk_95_L = FEw_est - 1.96*sqrt(FEw_var_jk),
+    # EME
+    EME_mod_95_H = EME_est + 1.96*sqrt(EME_var),
+    EME_mod_95_L = EME_est - 1.96*sqrt(EME_var),
+    EME_jk_95_H = EME_est + 1.96*sqrt(EME_var_jk),
+    EME_jk_95_L = EME_est - 1.96*sqrt(EME_var_jk),
+    # EMEw
+    EMEw_mod_95_H = EMEw_est + 1.96*sqrt(EMEw_var),
+    EMEw_mod_95_L = EMEw_est - 1.96*sqrt(EMEw_var),
+    EMEw_jk_95_H = EMEw_est + 1.96*sqrt(EMEw_var_jk),
+    EMEw_jk_95_L = EMEw_est - 1.96*sqrt(EMEw_var_jk),
+    # NEME
+    NEME_mod_95_H = NEME_est + 1.96*sqrt(NEME_var),
+    NEME_mod_95_L = NEME_est - 1.96*sqrt(NEME_var),
+    NEME_jk_95_H = NEME_est + 1.96*sqrt(NEME_var_jk),
+    NEME_jk_95_L = NEME_est - 1.96*sqrt(NEME_var_jk),
+    # NEMEw
+    NEMEw_mod_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var),
+    NEMEw_mod_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var),
+    NEMEw_jk_95_H = NEMEw_est + 1.96*sqrt(NEMEw_var_jk),
+    NEMEw_jk_95_L = NEMEw_est - 1.96*sqrt(NEMEw_var_jk),
+    ) %>%
+  select(
+    colnames(.[grepl("95",colnames(.))])
+  )
+
+# generate CP (cATE)
+CP_cate.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_CP = ifelse(cate > IEE_mod_95_L & cate < IEE_mod_95_H, 1, 0),
+    IEE_CR2_CP = ifelse(cate > IEE_CR2_95_L & cate < IEE_CR2_95_H, 1, 0),
+    IEE_jk_CP = ifelse(cate > IEE_jk_95_L & cate < IEE_jk_95_H, 1, 0),
+    # IEEw
+    IEEw_mod_CP = ifelse(cate > IEEw_mod_95_L & cate < IEEw_mod_95_H, 1, 0),
+    IEEw_CR2_CP = ifelse(cate > IEEw_CR2_95_L & cate < IEEw_CR2_95_H, 1, 0),
+    IEEw_jk_CP = ifelse(cate > IEEw_jk_95_L & cate < IEEw_jk_95_H, 1, 0),
+    # FE
+    FE_mod_CP = ifelse(cate > FE_mod_95_L & cate < FE_mod_95_H, 1, 0),
+    FE_CR2_CP = ifelse(cate > FE_CR2_95_L & cate < FE_CR2_95_H, 1, 0),
+    FE_jk_CP = ifelse(cate > FE_jk_95_L & cate < FE_jk_95_H, 1, 0),
+    # FEw
+    FEw_mod_CP = ifelse(cate > FEw_mod_95_L & cate < FEw_mod_95_H, 1, 0),
+    FEw_CR2_CP = ifelse(cate > FEw_CR2_95_L & cate < FEw_CR2_95_H, 1, 0),
+    FEw_jk_CP = ifelse(cate > FEw_jk_95_L & cate < FEw_jk_95_H, 1, 0),
+    # EME
+    EME_mod_CP = ifelse(cate > EME_mod_95_L & cate < EME_mod_95_H, 1, 0),
+    EME_jk_CP = ifelse(cate > EME_jk_95_L & cate < EME_jk_95_H, 1, 0),
+    # EMEw
+    EMEw_mod_CP = ifelse(cate > EMEw_mod_95_L & cate < EMEw_mod_95_H, 1, 0),
+    EMEw_jk_CP = ifelse(cate > EMEw_jk_95_L & cate < EMEw_jk_95_H, 1, 0),
+    # NEME
+    NEME_mod_CP = ifelse(cate > NEME_mod_95_L & cate < NEME_mod_95_H, 1, 0),
+    NEME_jk_CP = ifelse(cate > NEME_jk_95_L & cate < NEME_jk_95_H, 1, 0),
+    # NEMEw
+    NEMEw_mod_CP = ifelse(cate > NEMEw_mod_95_L & cate < NEMEw_mod_95_H, 1, 0),
+    NEMEw_jk_CP = ifelse(cate > NEMEw_jk_95_L & cate < NEMEw_jk_95_H, 1, 0)
+  ) %>%
+  select(
+    colnames(.[grepl("CP",colnames(.))])
+  )
+
+# generate CP (pATE)
+CP_pate.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_CP = ifelse(pate > IEE_mod_95_L & pate < IEE_mod_95_H, 1, 0),
+    IEE_CR2_CP = ifelse(pate > IEE_CR2_95_L & pate < IEE_CR2_95_H, 1, 0),
+    IEE_jk_CP = ifelse(pate > IEE_jk_95_L & pate < IEE_jk_95_H, 1, 0),
+    # IEEw
+    IEEw_mod_CP = ifelse(pate > IEEw_mod_95_L & pate < IEEw_mod_95_H, 1, 0),
+    IEEw_CR2_CP = ifelse(pate > IEEw_CR2_95_L & pate < IEEw_CR2_95_H, 1, 0),
+    IEEw_jk_CP = ifelse(pate > IEEw_jk_95_L & pate < IEEw_jk_95_H, 1, 0),
+    # FE
+    FE_mod_CP = ifelse(pate > FE_mod_95_L & pate < FE_mod_95_H, 1, 0),
+    FE_CR2_CP = ifelse(pate > FE_CR2_95_L & pate < FE_CR2_95_H, 1, 0),
+    FE_jk_CP = ifelse(pate > FE_jk_95_L & pate < FE_jk_95_H, 1, 0),
+    # FEw
+    FEw_mod_CP = ifelse(pate > FEw_mod_95_L & pate < FEw_mod_95_H, 1, 0),
+    FEw_CR2_CP = ifelse(pate > FEw_CR2_95_L & pate < FEw_CR2_95_H, 1, 0),
+    FEw_jk_CP = ifelse(pate > FEw_jk_95_L & pate < FEw_jk_95_H, 1, 0),
+    # EME
+    EME_mod_CP = ifelse(pate > EME_mod_95_L & pate < EME_mod_95_H, 1, 0),
+    EME_jk_CP = ifelse(pate > EME_jk_95_L & pate < EME_jk_95_H, 1, 0),
+    # EMEw
+    EMEw_mod_CP = ifelse(pate > EMEw_mod_95_L & pate < EMEw_mod_95_H, 1, 0),
+    EMEw_jk_CP = ifelse(pate > EMEw_jk_95_L & pate < EMEw_jk_95_H, 1, 0),
+    # NEME
+    NEME_mod_CP = ifelse(pate > NEME_mod_95_L & pate < NEME_mod_95_H, 1, 0),
+    NEME_jk_CP = ifelse(pate > NEME_jk_95_L & pate < NEME_jk_95_H, 1, 0),
+    # NEMEw
+    NEMEw_mod_CP = ifelse(pate > NEMEw_mod_95_L & pate < NEMEw_mod_95_H, 1, 0),
+    NEMEw_jk_CP = ifelse(pate > NEMEw_jk_95_L & pate < NEMEw_jk_95_H, 1, 0)
+  ) %>%
+  select(
+    colnames(.[grepl("CP",colnames(.))])
+  )
+# generate Power
+power.df <- CI.df %>%   
+  mutate(
+    # IEE
+    IEE_mod_power = ifelse(0 > IEE_mod_95_L & 0 < IEE_mod_95_H, 0, 1),
+    IEE_CR2_power = ifelse(0 > IEE_CR2_95_L & 0 < IEE_CR2_95_H, 0, 1),
+    IEE_jk_power = ifelse(0 > IEE_jk_95_L & 0 < IEE_jk_95_H, 0, 1),
+    # IEEw
+    IEEw_mod_power = ifelse(0 > IEEw_mod_95_L & 0 < IEEw_mod_95_H, 0, 1),
+    IEEw_CR2_power = ifelse(0 > IEEw_CR2_95_L & 0 < IEEw_CR2_95_H, 0, 1),
+    IEEw_jk_power = ifelse(0 > IEEw_jk_95_L & 0 < IEEw_jk_95_H, 0, 1),
+    # FE
+    FE_mod_power = ifelse(0 > FE_mod_95_L & 0 < FE_mod_95_H, 0, 1),
+    FE_CR2_power = ifelse(0 > FE_CR2_95_L & 0 < FE_CR2_95_H, 0, 1),
+    FE_jk_power = ifelse(0 > FE_jk_95_L & 0 < FE_jk_95_H, 0, 1),
+    # FEw
+    FEw_mod_power = ifelse(0 > FEw_mod_95_L & 0 < FEw_mod_95_H, 0, 1),
+    FEw_CR2_power = ifelse(0 > FEw_CR2_95_L & 0 < FEw_CR2_95_H, 0, 1),
+    FEw_jk_power = ifelse(0 > FEw_jk_95_L & 0 < FEw_jk_95_H, 0, 1),
+    # EME
+    EME_mod_power = ifelse(0 > EME_mod_95_L & 0 < EME_mod_95_H, 0, 1),
+    EME_jk_power = ifelse(0 > EME_jk_95_L & 0 < EME_jk_95_H, 0, 1),
+    # EMEw
+    EMEw_mod_power = ifelse(0 > EMEw_mod_95_L & 0 < EMEw_mod_95_H, 0, 1),
+    EMEw_jk_power = ifelse(0 > EMEw_jk_95_L & 0 < EMEw_jk_95_H, 0, 1),
+    # NEME
+    NEME_mod_power = ifelse(0 > NEME_mod_95_L & 0 < NEME_mod_95_H, 0, 1),
+    NEME_jk_power = ifelse(0 > NEME_jk_95_L & 0 < NEME_jk_95_H, 0, 1),
+    # NEMEw
+    NEMEw_mod_power = ifelse(0 > NEMEw_mod_95_L & 0 < NEMEw_mod_95_H, 0, 1),
+    NEMEw_jk_power = ifelse(0 > NEMEw_jk_95_L & 0 < NEMEw_jk_95_H, 0, 1)
+  ) %>%
+  select(
+    colnames(.[grepl("power",colnames(.))])
+  )
+
+# generate RMSE (cATE)
+MSE_cate.df <- (sim.df[grepl("est",colnames(sim.df))] - cate)^2
+MSE_pate.df <- (sim.df[grepl("est",colnames(sim.df))] - pate)^2
+
+# bias results
+results.relbias_cate <- colMeans(relbias_cate.df)
+results.relbias_pate <- colMeans(relbias_pate.df)
+
+# efficiency results
+results.efficiency <- colMeans(efficiency.df)
+
+# CP results
+results.CP_cate <- colMeans(CP_cate.df)
+results.CP_pate <- colMeans(CP_pate.df)
+
+# Power results
+results.power <- colMeans(power.df)
+
+# RMSE results
+results.RMSE_cate <- sqrt(colMeans(MSE_cate.df))
+results.RMSE_pate <- sqrt(colMeans(MSE_pate.df))
+
+
+results.relbias_cate
+results.relbias_pate
+results.efficiency
+results.CP_cate
+results.CP_pate
+results.power
+results.RMSE_cate
+results.RMSE_pate
+
+# check average variance results against MCSE
+```
+
+```{r * Plot (ICS) results}
+library(ggplot2)
+
+# plot relative bias
+rbind(
+  results.relbias_pate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "pATE"
+    )
+  ,
+  results.relbias_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "cATE"
+    )
+) %>%
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    estimand = factor(estimand, levels=c("pATE","cATE"))
+         ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
+  geom_bar(stat = "identity") +
+  facet_grid(estimand~weighted, scales="free") +
+  geom_hline(yintercept = 5, linetype = "dashed") +
+  geom_hline(yintercept = -5, linetype = "dashed") +
+  labs(y="Relative Bias (%)", x=NULL, title = "Relative Bias (%)") +
+  theme_bw() +
+  theme(legend.position = "none")
+# width: 500, height: 300
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_7.tiff"), plot = last_plot(),
+       width=5, height=3, units="in",
+       dpi=800, device='tiff')
+
+# plot RMSE
+rbind(
+  results.RMSE_pate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "RMSE",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "pATE"
+    )
+  ,
+  results.RMSE_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "RMSE",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "cATE"
+    )
+) %>%
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    estimand = factor(estimand, levels=c("pATE","cATE"))
+         ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
+  geom_bar(stat = "identity") +
+  facet_grid(estimand~weighted, scales="free") +
+  labs(y="RMSE", x=NULL, title = "RMSE") +
+  theme_bw() +
+  theme(legend.position = "none")
+# width: 500, height: 300
+
+# plot CP
+rbind(
+  results.CP_pate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "CP",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "pATE"
+    ),
+  results.CP_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "CP",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "cATE"
+    )
+) %>%
+  filter(varianceestimator != "CR2") %>% # remove CR2 variance estimators
+  mutate(varianceestimator = ifelse(varianceestimator=="mod","Model","Jackknife")) %>% # rename variance estimator levels
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife")),
+    estimand = factor(estimand, levels=c("pATE","cATE"))
+  ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(estimand~weighted, scales="free_x") +
+  geom_hline(yintercept = 0.95, linetype="dashed") +
+  scale_fill_manual(values=c("gray","gray2")) +
+  scale_color_manual(values=c("black","black")) +
+  labs(y="Coverage Probability", x=NULL, title = "Coverage Probability", fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 400
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_8.tiff"), plot = last_plot(),
+       width=5, height=4, units="in",
+       dpi=800, device='tiff')
+
+# plot power
+rbind(
+  results.power %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "Power",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+) %>%
+  filter(varianceestimator != "CR2") %>% # remove CR2 variance estimators
+  mutate(varianceestimator = ifelse(varianceestimator=="mod","Model","Jackknife")) %>% # rename variance estimator levels
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife"))
+    ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(.~weighted, scales="free_x") +
+  scale_fill_manual(values=c("gray","gray2")) +
+  scale_color_manual(values=c("black","black")) +
+  labs(y="Power", x=NULL, title = "Power", fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 300
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_9.tiff"), plot = last_plot(),
+       width=5, height=3, units="in",
+       dpi=800, device='tiff')
+```
+
+Supplementary/Appendix results
+```{r * Supplementary Results CR2}
+results.variance %>% 
+  mutate(
+    analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+    varianceestimator = sub(".+_(.+)","\\1", rownames(results.variance)),
+    # result = "Power",
+    weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+  ) %>%
+  mutate(varianceestimator = ifelse(varianceestimator=="var", "Model", ifelse(varianceestimator=="jk", "Jackknife", ifelse(varianceestimator=="MC","Monte Carlo","BRL")))) %>%
+  filter(!(analysis %in% c("EME","NEME","EMEw","NEMEw"))) %>%
+  mutate(
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife","BRL","Monte Carlo")),
+    analysis = factor(analysis, levels=c("IEE","FE","IEEw","FEw"))
+  ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(~weighted, scales="free_x") +
+  scale_fill_manual(values=c("gray","gray2","gray25","white")) +
+  scale_color_manual(values=c("black","black","black","black")) +
+  labs(y="Variance", title = "Efficiency", x=NULL, fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 300
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_1_Figure_1.tiff"), plot = last_plot(),
+       width=5, height=3, units="in",
+       dpi=800, device='tiff')
+
+
+# plot CP, precision, power results
+# combine rel bias and RMSE results
+rbind(
+  results.CP_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "CP",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+  ,
+  results.power %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      varianceestimator = sub(".+_(.+)","\\1", sub("\\_CP.*", "", names(results.CP))), # annoying but works
+      result = "Power",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")
+    )
+) %>%
+  mutate(varianceestimator = ifelse(varianceestimator=="mod", "Model", ifelse(varianceestimator=="jk", "Jackknife", ifelse(varianceestimator=="MC","Monte Carlo","BRL")))) %>%
+  filter(!(analysis %in% c("EME","NEME","EMEw","NEMEw"))) %>%
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","IEEw","FEw")),
+    varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife","BRL"))
+    ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, fill=varianceestimator, color=varianceestimator)) +
+  geom_bar(position="dodge", stat = "identity") +
+  facet_grid(result~weighted, scales="free_x") +
+  geom_hline(data = data.frame(result = c("CP", "Power"), hline = c(0.95, NA)), aes(yintercept = hline), linetype = "dashed") +
+  scale_fill_manual(values=c("gray","gray2","gray25")) +
+  scale_color_manual(values=c("black","black","black")) +
+  labs(y=NULL, x=NULL, title = "Coverage Probability & Power", fill="Variance Estimator", color="Variance Estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 400
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_1_Figure_2.tiff"), plot = last_plot(),
+       width=5, height=4, units="in",
+       dpi=800, device='tiff')
+```
+
+```{r * sim PB-CRT data [additional EME biased scenario 1]}
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+set.seed(178934)
+hetTrtmnt = T
+
+# SET PB-CRT design 
+I=10
+J=2 # 2 periods
+Kmax=200
+
+# SET treatment effect
+if(hetTrtmnt == T){
+  trtmnteffectL = 0.2
+  trtmnteffectH = 0.5 # 0.2, 0.5
+}else{
+  trtmnteffectL = 0.35
+  trtmnteffectH = 0.35
+}
+
+# set randomization
+P1 = 0.5
+# set ratio size
+xi = 0.1
+
+# SET random effect sequences
+ICC = 1/(1+Kmax*sqrt(2*xi))
+CAC=1 # [test]
+
+sigma2e = 1
+tau2a = ICC*sigma2e/(1-ICC)
+tau2a
+tau2g = tau2a*(1-CAC)/CAC # fixed CAC following the definition in Ouyang
+tau2g
+
+# SET period effects
+period <- 0.2
+
+# generate output dataset
+saves <- c(
+  paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=1), c("_est")),
+  paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=1), c("_est"))
+)
+saves
+sim.df <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(sim.df) <- saves # rename columns
+sim.df
+
+EMEICC <- c()
+EMEwICC <- c()
+
+# generate jackknife saves
+saves_jk <- c("cluster_i","IEE", "IEEw", "FE", "FEw","EME", "EMEw", "NEME", "NEMEw")
+
+# generate n_sims
+n_sims <- 1000
+
+ptm <- proc.time()
+for(n in 1:n_sims){
+  
+  ####### generate cluster:period cell means data ####### 
+  
+  # generate alpha
+  I
+  alpha <- rnorm(n=I, mean=0, sd=sqrt(tau2a))
+  alpha
+  alpha.mat <- matrix(rep(alpha, J), nrow=I, ncol=J)
+  alpha.mat
+  # generate gamma
+  gamma <- rnorm(n=I*J, mean=0, sd=sqrt(tau2g))
+  gamma.mat <- matrix(gamma, nrow=I, ncol=J)
+  gamma.mat
+  
+  # generate period effects
+  period.mat <- matrix(c(rep(1, I), rep(1+period, I)), nrow=I, ncol=J)
+  period.mat
+  
+  # randomly generate random treatment
+  trtmnteffect.mat <- matrix(
+    rep(c(rep(trtmnteffectL,I*P1), rep(trtmnteffectH,I-I*P1)), J),
+    nrow=I,
+    ncol=J
+  )
+    trtmnteffect.mat
+  subpopulation.mat <- ifelse(trtmnteffect.mat==trtmnteffectL,"L", ifelse(trtmnteffect.mat==trtmnteffectH,"H",0))
+  subpopulation.mat
+  
+  # randomly select clusters that will receive intervention 
+  z <- sample(c(rep(0,I/2),rep(1,I/2)), I)
+  z <- c(rep(0,I), z)
+  z
+  z.mat <- matrix(z, nrow=I, ncol=J) # add baseline and make into matrix
+  z.mat
+  # check
+  c(z.mat) == z
+  
+  # generate outcomes matrix
+  ztrtmnt.mat <- z.mat * trtmnteffect.mat
+  ztrtmnt.mat
+  
+  # sum up everything
+  alpha.mat
+  gamma.mat
+  period.mat
+  ztrtmnt.mat
+  outcomes.mat <- alpha.mat + gamma.mat + period.mat + ztrtmnt.mat
+  outcomes.mat
+  
+  # generate df
+  means.df <- data.frame(
+    cluster = rep(1:I, 2),
+    period = rep(c(0,1), each=I),
+    z = c(z.mat),
+    avgoutcomes = c(outcomes.mat),
+    subpopulation = c(subpopulation.mat)
+  )
+  means.df
+  
+  # [check]
+  sd(outcomes.mat[,1])
+  sd(filter(means.df, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  # generate different cluster:period sizes
+  n_cpL <- rpois(I*P1, Kmax*xi) # variable cluster sizes and equal cp sizes
+  n_cpH <- rpois(I-I*P1, Kmax) # variable cluster sizes and equal cp sizes
+  n_cpL
+  n_cpH
+  n_cp <- c(n_cpL, n_cpH)
+  n_cp2 <- rep(n_cp, 2)
+  table(n_cp2, c(subpopulation.mat)) # check
+  
+  # replicate cluster:period mean entries by corresponding cluster size
+  means.df
+  means.df$Freq <- n_cp2
+  pb.df2 <- as.data.frame(lapply(means.df, rep, n_cp2))
+  pb.df2
+  table(pb.df2$Freq) # looks correct
+  
+  # [check]
+  sd(filter(pb.df2, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  # generate outcomes 
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
+  sd(filter(pb.df2, period==0, cluster==1)$outcome) # should be ~ 1
+  
+  # # create weighted df
+  pb.df2weighted <- pb.df2
+  pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+  
+  # prepare df for analysis
+  pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
+  # pb.df2$period <- as.factor(pb.df2$period)
+  pb.df2weighted$intervention <- pb.df2weighted$z
+  
+  # [check] design
+  table(pb.df2weighted$cluster, pb.df2weighted$period)
+  table(pb.df2weighted$cluster[pb.df2weighted$intervention==1], pb.df2weighted$period[pb.df2weighted$intervention==1])
+  
+  # [check] values
+  # [check] tau2a
+  sd(filter(pb.df2weighted, period==0)$avgoutcome)
+  sqrt(tau2a)
+  # check sigma2e -> should be ~ 1
+  sd(filter(pb.df2weighted, period==0, cluster==1)$outcome)
+  sqrt(sigma2e)
+
+  
+  # analyses
+  IEE <- lm(outcome ~ intervention + period, data = pb.df2weighted)
+  
+  IEEw <- lm(outcome ~ intervention + period, data = pb.df2weighted, weights = pb.df2weighted$W1)
+  
+  FE <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted)
+
+  FEw <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+
+  EME <- lme4::lmer(outcome ~ intervention + period + (1|cluster), data = pb.df2weighted)
+
+  EMEw <- mix(outcome ~ intervention + period + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+
+  NEME <- lme4::lmer(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
+
+  # outputs an error?
+  NEMEw <- mix(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+
+  sim.df <- sim.df %>% 
+    add_row(
+      IEE_est = summary(IEE)$coef[,"Estimate"]["intervention"],
+      IEEw_est = summary(IEEw)$coef[,"Estimate"]["intervention"],
+      FE_est = summary(FE)$coef[,"Estimate"]["intervention"],
+      FEw_est = summary(FEw)$coef[,"Estimate"]["intervention"],
+      EME_est = summary(EME)$coef[,"Estimate"]["intervention"],
+      EMEw_est = summary(EMEw)$coef[,"Estimate"]["intervention"],
+      NEME_est = summary(NEME)$coef[,"Estimate"]["intervention"],
+      NEMEw_est = summary(NEMEw)$coef[,"Estimate"]["intervention"]
+    )
+  
+  # test
+  EMEICC <- c(EMEICC, ((as.data.frame(VarCorr(EME))$vcov[1])/(as.data.frame(VarCorr(EME))$vcov[1] + as.data.frame(VarCorr(EME))$vcov[2])))
+  EMEwICC <- c(EMEwICC, (summary(EMEw)$vars[1,1])/(summary(EMEw)$vars[2,1] + summary(EMEw)$vars[1,1]))
+
+  print(nrow(sim.df))
+}
+etm <- proc.time()-ptm 
+etm
+
+# check ICC values
+ICC
+mean(EMEICC)
+mean(EMEwICC)
+
+xi
+P1
+
+cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
+pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
+
+
+write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",round(CAC),"CAC_OptimalICC_Scenario2_p1_",xi,"xi_",Kmax,"Kmax",".csv"))
+
+##### Extra Bias Plot 1
+sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_1CAC_OptimalICC_Scenario2_p1_0.1xi_200Kmax.csv")
+
+trtmnteffectL = 0.2
+trtmnteffectH = 0.5 # 0.2, 0.5
+Kmax=200
+# set randomization
+P1 = 0.5
+# set ratio size
+xi = 0.1
+cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
+pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
+
+# generate Bias (cATE)
+bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cATE
+relbias_cate.df <- (bias_cate.df/cATE)*100
+# generate Bias (pATE)
+bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pATE
+relbias_pate.df <- (bias_pate.df/pATE)*100
+results.relbias_cate <- colMeans(relbias_cate.df)
+results.relbias_pate <- colMeans(relbias_pate.df)
+
+library(ggplot2)
+library(latex2exp)
+# plot relative bias
+rbind(
+  results.relbias_pate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "pATE"
+    )
+  ,
+  results.relbias_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "cATE"
+    )
+) %>%
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    estimand = factor(estimand, levels=c("pATE","cATE"))
+         ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
+  geom_bar(stat = "identity") +
+  facet_grid(estimand~weighted, scales="free") +
+  geom_hline(yintercept = 5, linetype = "dashed") +
+  geom_hline(yintercept = -5, linetype = "dashed") +
+  labs(y="Relative Bias (%)", x=NULL, 
+       title = TeX(paste0("Relative Bias (%) ($K_{i-,1}=$",xi*Kmax,", $K_{i-,2}=$",Kmax,", $\\zeta=$",xi,")"))
+       ) +
+  theme_bw() +
+  theme(legend.position = "none")
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_2_Figure_1.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
+```
+
+```{r * sim PB-CRT data [additional EME biased scenario 2]}
+library(dplyr)
+library(lme4)
+library(WeMix)
+
+set.seed(246)
+hetTrtmnt = T
+
+# SET PB-CRT design 
+I=10
+J=2 # 2 periods
+Kmax=1000
+
+# SET treatment effect
+trtmnteffectL = 0.2
+trtmnteffectH = 0.5
+
+# set randomization
+P1 = 0.5
+# set ratio size
+xi=0.05
+
+
+# SET random effect sequences
+ICC = 1/(1+Kmax*sqrt(2*xi))
+CAC=1 # [test]
+
+sigma2e = 1
+tau2a = ICC*sigma2e/(1-ICC)
+tau2a
+tau2g = tau2a*(1-CAC)/CAC # fixed CAC following the definition in Ouyang
+tau2g
+
+# SET period effects
+period <- 0.2
+
+# generate output dataset
+saves <- c(
+  paste0(rep(c("IEE", "IEEw", "FE", "FEw"), each=1), c("_est")),
+  paste0(rep(c("EME", "EMEw", "NEME", "NEMEw"), each=1), c("_est"))
+)
+saves
+sim.df <- data.frame(matrix(ncol=length(saves), nrow=0))
+names(sim.df) <- saves # rename columns
+sim.df
+
+EMEICC <- c()
+EMEwICC <- c()
+
+# generate jackknife saves
+saves_jk <- c("cluster_i","IEE", "IEEw", "FE", "FEw","EME", "EMEw", "NEME", "NEMEw")
+
+# generate n_sims
+n_sims <- 1000
+
+ptm <- proc.time()
+for(n in 1:n_sims){
+  
+  ####### generate cluster:period cell means data ####### 
+  
+  # generate alpha
+  I
+  alpha <- rnorm(n=I, mean=0, sd=sqrt(tau2a))
+  alpha
+  alpha.mat <- matrix(rep(alpha, J), nrow=I, ncol=J)
+  alpha.mat
+  # generate gamma
+  gamma <- rnorm(n=I*J, mean=0, sd=sqrt(tau2g))
+  gamma.mat <- matrix(gamma, nrow=I, ncol=J)
+  gamma.mat
+  
+  # generate period effects
+  period.mat <- matrix(c(rep(1, I), rep(1+period, I)), nrow=I, ncol=J)
+  period.mat
+  
+  # randomly generate random treatment
+  trtmnteffect.mat <- matrix(
+    rep(c(rep(trtmnteffectL,I*P1), rep(trtmnteffectH,I-I*P1)), J),
+    nrow=I,
+    ncol=J
+  )
+    trtmnteffect.mat
+  subpopulation.mat <- ifelse(trtmnteffect.mat==trtmnteffectL,"L", ifelse(trtmnteffect.mat==trtmnteffectH,"H",0))
+  subpopulation.mat
+  
+  # randomly select clusters that will receive intervention 
+  z <- sample(c(rep(0,I/2),rep(1,I/2)), I)
+  z <- c(rep(0,I), z)
+  z
+  z.mat <- matrix(z, nrow=I, ncol=J) # add baseline and make into matrix
+  z.mat
+  # check
+  c(z.mat) == z
+  
+  # generate outcomes matrix
+  ztrtmnt.mat <- z.mat * trtmnteffect.mat
+  ztrtmnt.mat
+  
+  # sum up everything
+  alpha.mat
+  gamma.mat
+  period.mat
+  ztrtmnt.mat
+  outcomes.mat <- alpha.mat + gamma.mat + period.mat + ztrtmnt.mat
+  outcomes.mat
+
+  # generate df
+  means.df <- data.frame(
+    cluster = rep(1:I, 2),
+    period = rep(c(0,1), each=I),
+    z = c(z.mat),
+    avgoutcomes = c(outcomes.mat),
+    subpopulation = c(subpopulation.mat)
+  )
+  means.df
+  
+  # [check]
+  sd(outcomes.mat[,1])
+  sd(filter(means.df, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  # generate different cluster:period sizes
+  n_cpL <- rpois(I*P1, Kmax*xi) # variable cluster sizes and equal cp sizes
+  n_cpH <- rpois(I-I*P1, Kmax) # variable cluster sizes and equal cp sizes
+  n_cpL
+  n_cpH
+  n_cp <- c(n_cpL, n_cpH)
+  n_cp2 <- rep(n_cp, 2)
+  table(n_cp2, c(subpopulation.mat)) # check
+  
+  # replicate cluster:period mean entries by corresponding cluster size
+  means.df
+  means.df$Freq <- n_cp2
+  pb.df2 <- as.data.frame(lapply(means.df, rep, n_cp2))
+  pb.df2
+  table(pb.df2$Freq) # looks correct
+  
+  # [check]
+  sd(filter(pb.df2, period==0)$avgoutcomes) # should be same as above
+  sqrt(tau2a)
+
+  # generate outcomes 
+  pb.df2$outcome <- pb.df2$avgoutcomes + rnorm(n=nrow(pb.df2), mean=0, sd=sqrt(sigma2e))
+  sd(filter(pb.df2, period==0, cluster==1)$outcome) # should be ~ 1
+
+  # # create weighted df
+  pb.df2weighted <- pb.df2
+  pb.df2weighted$W1 <- 1/pb.df2weighted$Freq
+  
+  # prepare df for analysis
+  pb.df2weighted$cluster <- as.factor(pb.df2weighted$cluster)
+  # pb.df2$period <- as.factor(pb.df2$period)
+  pb.df2weighted$intervention <- pb.df2weighted$z
+  
+  # [check] design
+  table(pb.df2weighted$cluster, pb.df2weighted$period)
+  table(pb.df2weighted$cluster[pb.df2weighted$intervention==1], pb.df2weighted$period[pb.df2weighted$intervention==1])
+  
+  # [check] values
+  # [check] tau2a
+  sd(filter(pb.df2weighted, period==0)$avgoutcome)
+  sqrt(tau2a)
+  # check sigma2e -> should be ~ 1
+  sd(filter(pb.df2weighted, period==0, cluster==1)$outcome)
+  sqrt(sigma2e)
+
+  # analyses
+  IEE <- lm(outcome ~ intervention + period, data = pb.df2weighted)
+  
+  IEEw <- lm(outcome ~ intervention + period, data = pb.df2weighted, weights = pb.df2weighted$W1)
+  
+  FE <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted)
+
+  FEw <- lm(outcome ~ intervention + period + cluster, data = pb.df2weighted, weights = pb.df2weighted$W1)
+
+  EME <- lme4::lmer(outcome ~ intervention + period + (1|cluster), data = pb.df2weighted)
+
+  EMEw <- mix(outcome ~ intervention + period + (1|cluster), data=pb.df2weighted, weights=c("W1", "W1"))
+
+  NEME <- lme4::lmer(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data = pb.df2weighted)
+
+  # outputs an error?
+  NEMEw <- mix(outcome ~ intervention + period + (1|cluster) + (1|cluster:period), data=pb.df2weighted, weights=c("W1", "W1", "W1"))
+
+  sim.df <- sim.df %>% 
+    add_row(
+      IEE_est = summary(IEE)$coef[,"Estimate"]["intervention"],
+      IEEw_est = summary(IEEw)$coef[,"Estimate"]["intervention"],
+      FE_est = summary(FE)$coef[,"Estimate"]["intervention"],
+      FEw_est = summary(FEw)$coef[,"Estimate"]["intervention"],
+      EME_est = summary(EME)$coef[,"Estimate"]["intervention"],
+      EMEw_est = summary(EMEw)$coef[,"Estimate"]["intervention"],
+      NEME_est = summary(NEME)$coef[,"Estimate"]["intervention"],
+      NEMEw_est = summary(NEMEw)$coef[,"Estimate"]["intervention"]
+    )
+  
+  # test
+  EMEICC <- c(EMEICC, ((as.data.frame(VarCorr(EME))$vcov[1])/(as.data.frame(VarCorr(EME))$vcov[1] + as.data.frame(VarCorr(EME))$vcov[2])))
+  EMEwICC <- c(EMEwICC, (summary(EMEw)$vars[1,1])/(summary(EMEw)$vars[2,1] + summary(EMEw)$vars[1,1]))
+
+  print(nrow(sim.df))
+}
+etm <- proc.time()-ptm 
+etm
+
+# check ICC values
+ICC
+mean(EMEICC)
+mean(EMEwICC)
+
+xi
+P1
+
+# cATE with superpopulation
+cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
+pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
+
+# sim.df
+write.csv(sim.df, paste0("results_",n_sims,"sim_",hetTrtmnt,"hettrtmnt_",round(CAC),"CAC_OptimalICC_Scenario2_p1_",xi,"xi_",Kmax,"Kmax",".csv"))
+
+##### Extra Bias Plot 2
+sim.df <- read.csv("results_1000sim_TRUEhettrtmnt_1CAC_OptimalICC_Scenario2_p1_0.05xi_1000Kmax.csv")
+
+trtmnteffectL = 0.2
+trtmnteffectH = 0.5 # 0.2, 0.5
+Kmax=1000
+# set randomization
+P1 = 0.5
+# set ratio size
+xi=0.05
+cATE <- P1*trtmnteffectL + (1-P1)*trtmnteffectH
+pATE <- (P1*Kmax*xi*trtmnteffectL + (1-P1)*Kmax*trtmnteffectH) / (P1*Kmax*xi + (1-P1)*Kmax)
+
+# generate Bias (cATE)
+bias_cate.df <- sim.df[grepl("est",colnames(sim.df))] - cATE
+relbias_cate.df <- (bias_cate.df/cATE)*100
+# generate Bias (pATE)
+bias_pate.df <- sim.df[grepl("est",colnames(sim.df))] - pATE
+relbias_pate.df <- (bias_pate.df/pATE)*100
+results.relbias_cate <- colMeans(relbias_cate.df)
+results.relbias_pate <- colMeans(relbias_pate.df)
+
+library(ggplot2)
+library(latex2exp)
+# plot relative bias
+rbind(
+  results.relbias_pate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "pATE"
+    )
+  ,
+  results.relbias_cate %>% 
+    reshape2::melt() %>% 
+    mutate(
+      analysis = sub("\\_.*", "", rownames(.)), # only keep analysis title (up to "_")
+      result = "Relative Bias (%)",
+      weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted"),
+      estimand = "cATE"
+    )
+) %>%
+  # factor
+  mutate(
+    analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw","EMEw","NEMEw")),
+    estimand = factor(estimand, levels=c("pATE","cATE"))
+         ) %>%
+  # plot
+  ggplot(., aes(x=analysis, y=value, color=I("black"))) + 
+  geom_bar(stat = "identity") +
+  facet_grid(estimand~weighted, scales="free") +
+  geom_hline(yintercept = 5, linetype = "dashed") +
+  geom_hline(yintercept = -5, linetype = "dashed") +
+  labs(y="Relative Bias (%)", x=NULL, 
+       title = TeX(paste0("Relative Bias (%) ($K_{i-,1}=$",xi*Kmax,", $K_{i-,2}=$",Kmax,", $\\zeta=$",xi,")"))
+       ) +
+  theme_bw() +
+  theme(legend.position = "none")
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_A_4_2_Figure_2.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
+```
+
+# Jiah trial re-analysis
+```{r * Import & clean Jiah trial data}
+# https://www.sciencedirect.com/science/article/pii/S2352827322003093#da0010
+
+# import cleaned up jiah dataset (cleaned by running the accompanying do file in Stata and exporting the data as .csv)
+jiah <- read.csv("jiah_trial_dataset_cleaned.csv")
+
+# big ass dataset
+
+# identify
+# cluster
+jiah$idclus %>% table()
+
+# period
+jiah$baseline %>% table()
+jiah$endline %>% table()
+
+# cluster period
+table(jiah$idclus, jiah$endline)
+
+# treatment
+jiah$treatment %>% table()
+jiah$treatment <- factor(jiah$treatment)
+table(jiah[jiah$treatment==1,]$idclus, jiah[jiah$treatment==1,]$endline)
+
+# outcome
+# school attendance, dietary diversity, and mental health
+# In intervention vs control clusters, mean dietary diversity score was 4·0 (SD 1·5) vs 3·6 (SD 1·2) (adjDiff 0·34; 95%CI -0·23, 0·93, p = 0·242); mean Brief Problem Monitor-Youth (mental health) score was 12·5 (SD 6·0) vs 11·9 (SD 5·9) (adjDiff 0·02, 95%CI -0·06, 0·13, p = 0·610); and school enrolment rates were 70% vs 63% (adjOR 1·39, 95%CI 0·89, 2·16, p = 0·142)
+jiah$alcohol_ever # binary
+jiah$mentalhealth # continuous
+jiah$diet_score # count
+
+# test models
+lm(mentalhealth ~ treatment + endline, data = jiah)
+lm(mentalhealth ~ treatment + endline + idclus, data = jiah)
+```
+
+```{r * Analyze Jiah data}
+library(dplyr)
+table(jiah$idclus, jiah$endline)
+# remove clusters with missing data from a period
+jiah.complete <- jiah %>% filter(!idclus %in% c(1, 4, 12, 21, 22, 25, 26, 31, 34, 37))
+table(jiah.complete$idclus, jiah.complete$endline)
+table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)
+length(unique(jiah.complete$idclus)) # 28 total clusters
+
+length(table(jiah.complete[jiah.complete$treatment==1,]$idclus, jiah.complete[jiah.complete$treatment==1,]$endline)) # 14 clusters w/ trtmnt
+length(table(jiah.complete$idclus)) # 28 clusters
+
+# get cluster means & use that as the weight...
+cellmeansize <- as.data.frame(rowMeans(table(jiah.complete$idclus, jiah.complete$endline)))
+colnames(cellmeansize) <- "mean_Freq"
+cellmeansize$idclus <- rownames(cellmeansize)
+cellmeansize
+
+# get cluster:period size
+cellsize <- as.data.frame(table(jiah.complete$idclus, jiah.complete$endline))
+colnames(cellsize) <- c("idclus", "endline", "Freq")
+cellsize
+
+# # get cp2 size
+cellsize2 <- cellsize %>% filter(endline==1) %>% select(-endline)
+colnames(cellsize2) <- c("idclus", "Freq2")
+
+# merge both into Haines_pb.df
+jiah.complete <- merge(jiah.complete, cellmeansize, by="idclus")
+jiah.complete <- merge(jiah.complete, cellsize, by=c("idclus","endline"))
+jiah.complete <- merge(jiah.complete, cellsize2, by=c("idclus"))
+
+jiah.complete$W1 <- 1/jiah.complete$Freq
+
+# jiah saves dataset
+jiahsaves <- data.frame(
+  analysis = c("IEE","FE","EME","NEME", "IEEw", "FEw"),
+  est = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Estimate"]
+  ),
+  SE_mod = c(
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jiah.complete))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"],
+    summary(lm(mentalhealth ~ treatment + endline + idclus, data = jiah.complete, weights = jiah.complete$W1))$coef["treatment1","Std. Error"]
+  )
+)
+
+# jackknife
+saves_jk <- c("cluster_i", "IEE", "IEEw", "FE", "FEw", "EME", "NEME")
+jk.df <- data.frame(matrix(ncol=length(saves_jk), nrow=0))
+names(jk.df) <- saves_jk
+jk.df
+for(i in unique(jiah.complete$idclus)){
+  jk.dat <- jiah.complete %>% filter(idclus!=i)
+
+  jk.df <- jk.df %>%
+    add_row(
+      cluster_i=as.numeric(i),
+      IEE = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat))$coef["treatment1","Estimate"],
+      IEEw = summary(lm(mentalhealth ~ treatment + endline, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      FE = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat))$coef["treatment1","Estimate"],
+      FEw = summary(lm(mentalhealth ~ treatment + endline + idclus, data = jk.dat, weights = jk.dat$W1))$coef["treatment1","Estimate"],
+      EME = summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus), data=jk.dat))$coef["treatment1","Estimate"],
+      NEME =  summary(lme4::lmer(mentalhealth ~ treatment + endline + (1|idclus) + (1|idclus:endline), data=jk.dat))$coef["treatment1","Estimate"]
+    )
+  print(nrow(jk.df))
+}
+
+jiahsaves$SE_jk <- c(
+  sqrt(sum((jk.df$IEE-filter(jiahsaves,analysis=="IEE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FE-filter(jiahsaves,analysis=="FE")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$EME-filter(jiahsaves,analysis=="EME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$NEME-filter(jiahsaves,analysis=="NEME")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$IEEw-filter(jiahsaves,analysis=="IEEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df))),
+  sqrt(sum((jk.df$FEw-filter(jiahsaves,analysis=="FEw")$est)^2)*(nrow(jk.df)-1)/(nrow(jk.df)))
+)
+jiahsaves
+
+# create 95% CI
+jiahsaves$mod_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_mod
+jiahsaves$mod_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_mod
+jiahsaves$jk_95_H <- jiahsaves$est + 1.96*jiahsaves$SE_jk
+jiahsaves$jk_95_L <- jiahsaves$est - 1.96*jiahsaves$SE_jk
+
+# Plot results
+rbind(
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=mod_95_H, CI_95_L=mod_95_L) %>% mutate(varianceestimator="Model"),
+  jiahsaves %>% dplyr::select(analysis, est, CI_95_H=jk_95_H, CI_95_L=jk_95_L) %>% mutate(varianceestimator="Jackknife")
+) %>% 
+  # create levels for variance estimator
+  mutate(varianceestimator = factor(varianceestimator, levels=c("Model","Jackknife"))) %>% 
+  # create levels for analysis variables
+  mutate(analysis = factor(analysis, levels=c("IEE","FE","EME","NEME","IEEw","FEw"))) %>% 
+  # create variable for weighted and unweighted analayses
+  mutate(weighted = ifelse(grepl("w",analysis),"Weighted","Unweighted")) %>%
+ggplot(., aes(x=analysis, y=est, group=varianceestimator, color=varianceestimator)) + 
+  geom_point(position=position_dodge(width=0.4)) +
+  geom_errorbar(aes(ymin=CI_95_L, ymax=CI_95_H), width=.2,
+                position=position_dodge(0.4)) +
+  facet_grid(~weighted, scales="free") +
+  ylim(-0.1,0.25) +
+  geom_hline(yintercept=0, linetype="dashed") + 
+  labs(y=NULL, x=NULL, title = "Re-analysis of JIAH trial", subtitle="Effect of community youth teams on mental health scores", color="95% CI variance estimator") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+# width: 500, height: 350
+
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_10.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
+```

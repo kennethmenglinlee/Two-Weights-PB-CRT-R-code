@@ -2343,6 +2343,9 @@ ggplot(., aes(x=analysis, y=est, group=varianceestimator, color=varianceestimato
   theme_bw() +
   theme(legend.position = "bottom")
 # width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_10.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
 
   
   
@@ -2508,15 +2511,18 @@ EMEw_data %>%
   ggplot(aes(x=ICC, y=value, group=weight)) +
   geom_line(aes(color=weight)) +
   facet_grid(P1cat ~ SizeRatio) +
-  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
-  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,s}$"), color=NULL) +
-  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,u}$"), color=NULL) +
+  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(u=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
   scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
   theme_bw() +
   # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
   geom_vline(data  = EMEw_data, aes(xintercept = maxICC), linetype="dashed", color = "gray45") +
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
 # width: 800, height: 500
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_EMEw_estimand_weights.tiff"), plot = last_plot(),
+       width=8, height=5, units="in",
+       dpi=800, device='tiff')
 
 # [For manuscript]
 EMEw_data %>%
@@ -2525,15 +2531,18 @@ EMEw_data %>%
   ggplot(aes(x=ICC, y=value, group=weight)) +
   geom_line(aes(color=weight)) +
   facet_grid(. ~ SizeRatio) +
-  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
-  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,s}$"), color=NULL) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="EMEw weights", y=TeX("$\\lambda_{EMEw,u}$"), color=NULL) +
   # scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL, ), limits=c(0,2)) +
   scale_y_continuous(limits=c(0,2)) +
   scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
   theme_bw() +
   # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
-# width: 500, height: 400
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_2.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
 ```
 
 ```{r * Analyze NEMEw weights}
@@ -2620,6 +2629,9 @@ NEMEw_data %>%
   # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
 # width: 500, height: 420
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Appendix_NEMEw_estimand_weights.tiff"), plot = last_plot(),
+       width=5, height=4.2, units="in",
+       dpi=800, device='tiff')
 
 # [for manuscript]
 NEMEw_data %>%
@@ -2627,12 +2639,16 @@ NEMEw_data %>%
   ggplot(aes(x=wpICC, y=value, group=weight)) +
   geom_line(aes(color=weight)) +
   facet_grid(. ~ SizeRatio) +
-  scale_color_manual(labels = c(TeX("$s=1$"), TeX("$s=2$")), values=c("#00BFC4","#F8766D")) +
-  labs(title="NEMEw weights (CAC=0.8)", y=TeX("$\\lambda_{NEMEw,s}$"), x="within-period ICC", color=NULL) +
-  scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL), limits=c(0,2)) +
+  scale_color_manual(labels = c(TeX("$u=1$"), TeX("$u=2$")), values=c("#00BFC4","#F8766D")) +
+  labs(title="NEMEw weights (CAC=0.8)", y=TeX("$\\lambda_{NEMEw,u}$"), x="within-period ICC", color=NULL) +
+  # scale_y_continuous(sec.axis = sec_axis(~ . , name = TeX("$P(s=1) =$"), breaks = NULL, labels = NULL), limits=c(0,2)) +
+  scale_y_continuous(limits=c(0,2)) +
   scale_x_continuous(sec.axis = sec_axis(~ . , name = TeX("$\\zeta =$"), breaks = NULL, labels = NULL)) +
   theme_bw() +
   # geom_vline(xintercept = 0.02, linetype="dashed", color="gray45") + # where maximum ICC is
   theme(legend.position = "bottom", axis.text.x = element_text(angle = 270, vjust = 0.5, hjust=1))
-# width: 500, height: 400
+# width: 500, height: 350
+ggsave(filename = paste0(getwd(),"/Submission 1/Figures/Kenneth_Menglin_Lee_Figure_3.tiff"), plot = last_plot(),
+       width=5, height=3.5, units="in",
+       dpi=800, device='tiff')
 ```
